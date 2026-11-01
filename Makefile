@@ -19,7 +19,7 @@ fmt: ## fail if any file needs gofmt
 
 LINT_VERSION ?= v2.15.0
 lint: ## golangci-lint, fetched on demand (not a module dependency)
-	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(LINT_VERSION) run ./...
+	GOTOOLCHAIN=auto go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(LINT_VERSION) run ./...
 
 check: fmt vet test ## tests and vet; CI also runs lint
 
