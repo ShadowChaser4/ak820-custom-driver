@@ -1,0 +1,257 @@
+package core
+
+import (
+	"encoding/hex"
+	"errors"
+	"image"
+	"strings"
+	"testing"
+	"time"
+
+	"ak820/internal/hidraw"
+	"ak820/internal/img"
+)
+
+func desc(s string) []byte {
+	b, err := hex.DecodeString(strings.ReplaceAll(s, " ", ""))
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+// The four interfaces of a real 0c45:800a unit (descriptors captured from hidraw5-8).
+func realUnit() []hidraw.Info {
+	mk := func(node string, iface int, raw []byte) hidraw.Info {
+		return hidraw.Info{Node: node, VID: 0x0C45, PID: 0x800A, Iface: iface, Raw: raw, D: hidraw.ParseDescriptor(raw)}
+	}
+	return []hidraw.Info{
+		mk("/dev/hidraw5", 0, desc("0501 0906 a101 0507 19e0 29e7 1500 2501 7501 9508 8102 9501 7508 8101 9505 7501 0508 1901 2905 9102 9501 7503 9101 9506 7508 1500 26ff00 0507 1900 2a6500 8100 c0")),
+		mk("/dev/hidraw7", 2, desc("0668ff0961a1010962150026ff00954075088102 096315 0026ff00 960010 7508 9102 c0")),
+		mk("/dev/hidraw8", 3, desc("0613ff0901a1011500 26ff00 7508 9540 0902 8102 0903 9102 0a00ff b102 c0")),
+	}
+}
+
+type fakeDev struct {
+	node    string
+	writes  *[][]byte
+	feats   *[][]byte
+	replies map[string][][]byte // node -> queued replies, released after any write
+	armed   bool
+}
+
+func (f *fakeDev) Write(p []byte) error { *f.writes = append(*f.writes, p); f.armed = true; return nil }
+func (f *fakeDev) ReadTimeout(time.Duration) ([]byte, error) {
+	q := f.replies[f.node]
+	if !f.armed || len(q) == 0 {
+		return nil, nil
+	}
+	f.replies[f.node] = q[1:]
+	return q[0], nil
+}
+func (f *fakeDev) GetFeature(id byte, n int) ([]byte, error) { return make([]byte, n+1), nil }
+func (f *fakeDev) SetFeature(p []byte, n int) error {
+	*f.feats = append(*f.feats, append([]byte(nil), p...))
+	return nil
+}
+func (f *fakeDev) Close() error { return nil }
+
+type rig struct {
+	c      *Core
+	opens  int
+	writes [][]byte
+	feats  [][]byte
+	reply  map[string][][]byte
+}
+
+func newRig(t *testing.T) *rig {
+	r := &rig{reply: map[string][][]byte{}}
+	r.c = &Core{
+		Enumerate: func() ([]hidraw.Info, error) { return realUnit(), nil },
+		OpenDev: func(i hidraw.Info) (DevIO, error) {
+			r.opens++
+			return &fakeDev{node: i.Node, writes: &r.writes, feats: &r.feats, replies: r.reply}, nil
+		},
+		ConfigDir: t.TempDir(),
+		DataDir:   t.TempDir(),
+	}
+	return r
+}
+
+func infoReply() []byte {
+	b := make([]byte, 64)
+	b[0], b[1] = 0x55, 0x10
+	b[8+4], b[8+5], b[8+6], b[8+7] = 0x45, 0x0c, 0x0a, 0x80
+	b[8+8] = 0x16
+	b[8+8+1] = 0x01
+	b[8+22] = 100
+	return b
+}
+
+func TestRealUnitIsSonixLayout(t *testing.T) {
+	r := newRig(t)
+	all, _ := r.c.Devices()
+	if Layout(all) != "sonix" {
+		t.Fatalf("layout %q", Layout(all))
+	}
+	ctl, dat, _ := r.c.Resolve(all, "cmd", Target{})
+	if ctl.Node != "/dev/hidraw8" || dat != 64 {
+		t.Errorf("cmd -> %s %d", ctl.Node, dat)
+	}
+	d, n, _ := r.c.Resolve(all, "data", Target{})
+	if d.Node != "/dev/hidraw7" || n != 4096 {
+		t.Errorf("data -> %s %d", d.Node, n)
+	}
+}
+
+func TestUnknownLayoutIsRefused(t *testing.T) {
+	r := newRig(t)
+	only := realUnit()[:2] // keyboard + FF68 only: no control interface
+	if Layout(only) != "unknown" {
+		t.Fatal("expected unknown")
+	}
+	if _, _, err := r.c.Resolve(only, "cmd", Target{}); err == nil {
+		t.Fatal("Resolve must refuse to guess")
+	}
+}
+
+func TestProbeDryTouchesNothing(t *testing.T) {
+	r := newRig(t)
+	res, err := r.c.Probe(true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.opens != 0 || len(r.writes) != 0 {
+		t.Fatalf("dry run opened %d / wrote %d", r.opens, len(r.writes))
+	}
+	if len(res.Steps) != 2 || res.Steps[0].Node != "/dev/hidraw8" || res.Steps[1].Node != "/dev/hidraw7" {
+		t.Fatalf("steps %+v", res.Steps)
+	}
+	if len(res.Features) != 1 || res.Features[0].Node != "/dev/hidraw8" {
+		t.Fatalf("features %+v", res.Features)
+	}
+}
+
+func TestProbeRealSendsOneFramePerCandidateAndCollectsReplies(t *testing.T) {
+	r := newRig(t)
+	r.reply["/dev/hidraw8"] = [][]byte{infoReply()}
+	res, err := r.c.Probe(false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.writes) != 2 || len(r.writes[0]) != 64 || len(r.writes[1]) != 4096 {
+		t.Fatalf("writes: %d", len(r.writes))
+	}
+	if len(res.Steps[0].Replies) != 1 || len(res.Steps[1].Replies) != 0 {
+		t.Fatalf("replies %+v", res.Steps)
+	}
+}
+
+func TestInfoDryOpensNothingAndRealSavesTarget(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.c.Info(Target{Node: "hidraw8"}, true, true); err != nil || r.opens != 0 {
+		t.Fatalf("dry: err %v opens %d", err, r.opens)
+	}
+	if r.c.Config().Cmd.Node != "" {
+		t.Fatal("dry run must not save a target")
+	}
+	r.reply["/dev/hidraw8"] = [][]byte{infoReply()}
+	res, err := r.c.Info(Target{Node: "hidraw8"}, false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Info.Firmware != "1.16" || res.Info.PID != 0x800a {
+		t.Fatalf("%+v", res.Info)
+	}
+	if got := r.c.Config().Cmd; got.Node != "/dev/hidraw8" || got.Len != 64 {
+		t.Fatalf("saved %+v", got)
+	}
+}
+
+func TestInfoNoReplyDoesNotSave(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.c.Info(Target{Node: "hidraw8"}, false, true); err == nil {
+		t.Fatal("expected timeout")
+	}
+	if r.c.Config().Cmd.Node != "" {
+		t.Fatal("must not save an unconfirmed target")
+	}
+}
+
+func TestUploadDryNeedsNoDeviceAndUsesSavedTarget(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.c.Upload(Target{}, make([]byte, 100), true, nil); err == nil {
+		t.Fatal("garbage payload must be refused")
+	}
+	pl := validPayload()
+	res, err := r.c.Upload(Target{}, pl, true, nil)
+	if err != nil || r.opens != 0 || len(r.writes)+len(r.feats) != 0 {
+		t.Fatalf("%+v %v opens %d", res, err, r.opens)
+	}
+	if res.Node != "/dev/hidraw7" || res.Len != 4096 || res.Packets != 9 || !res.Flash {
+		t.Fatalf("%+v", res)
+	}
+}
+
+func validPayload() []byte {
+	im := image.NewRGBA(image.Rect(0, 0, img.W, img.H))
+	return img.BuildPayload([]img.Frame{{Img: im, DelayMs: 100}})
+}
+
+func TestClockDryDoesNothingAndRealConfirmsTarget(t *testing.T) {
+	r := newRig(t)
+	now := time.Date(2026, 11, 1, 13, 40, 59, 0, time.Local)
+	res, err := r.c.SetTime(Target{}, now, true)
+	if err != nil || r.opens != 0 || len(r.feats) != 0 || len(res.Steps) != 4 {
+		t.Fatalf("dry: %v opens %d feats %d steps %d", err, r.opens, len(r.feats), len(res.Steps))
+	}
+	if r.c.Config().Cmd.Node != "" {
+		t.Fatal("dry run must not confirm anything")
+	}
+	if _, err := r.c.SetTime(Target{}, now, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.feats) != 4 {
+		t.Fatalf("expected 4 control frames, got %d", len(r.feats))
+	}
+	if got := r.c.Config().Cmd; got.Node != "/dev/hidraw8" {
+		t.Fatalf("saved %+v", got)
+	}
+	all, _ := r.c.Devices()
+	if !r.c.Ready(all) {
+		t.Error("should be ready after a successful clock sync")
+	}
+}
+
+func TestReadyRequiresTheSavedNodeToStillExist(t *testing.T) {
+	r := newRig(t)
+	_ = r.c.SaveConfig(Config{Cmd: Target{"/dev/hidraw42", 64}})
+	all, _ := r.c.Devices()
+	if r.c.Ready(all) {
+		t.Fatal("stale node must not count as ready")
+	}
+}
+
+func TestBuiltinUnsupportedOnSonix(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.c.Builtin(Target{}, 1, true); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestDescribeIsPlainLanguage(t *testing.T) {
+	r := newRig(t)
+	if f := r.c.Describe(nil, ErrNoDevice); f.Level != "bad" || !strings.Contains(f.Message, "USB") {
+		t.Errorf("%+v", f)
+	}
+	all, _ := r.c.Devices()
+	if f := r.c.Describe(all, nil); f.Level == "bad" {
+		// nodes in the rig do not exist on disk, so Accessible() is false -> permission message
+		if !strings.Contains(f.Title, "not allowed") {
+			t.Errorf("%+v", f)
+		}
+	}
+	if f := r.c.Describe(realUnit()[:2], nil); f.Level == "ok" {
+		t.Errorf("unsupported layout must not look connected: %+v", f)
+	}
+}
