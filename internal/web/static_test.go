@@ -78,7 +78,7 @@ func TestEveryAPIPathCalledByTheScriptIsRegistered(t *testing.T) {
 // The page must work offline and never phone home.
 func TestNoExternalResources(t *testing.T) {
 	ext := regexp.MustCompile(`(?i)(https?:)?//[a-z0-9.-]+\.[a-z]{2,}`)
-	for _, name := range []string{"index.html", "app.js", "style.css"} {
+	for _, name := range []string{"index.html", "app.js", "style.css", "favicon.svg"} {
 		for _, m := range ext.FindAllString(staticFile(t, name), -1) {
 			if strings.Contains(m, "www.w3.org") { // SVG namespace, not a request
 				continue
@@ -127,5 +127,17 @@ func TestPageBasics(t *testing.T) {
 		if strings.Contains(main, jargon) {
 			t.Errorf("%q appears in the main flow; keep jargon under Advanced", jargon)
 		}
+	}
+}
+
+// Browsers fetch the icon without the API token, so it must load like the page does.
+func TestFaviconIsLinkedAndServed(t *testing.T) {
+	if !strings.Contains(staticFile(t, "index.html"), `<link rel="icon" type="image/svg+xml" href="favicon.svg">`) {
+		t.Error("the page does not link the icon")
+	}
+	ts, _, _, _ := rig(t, false)
+	resp := do(t, ts, http.MethodGet, "/favicon.svg", nil, map[string]string{"X-Token": ""})
+	if ct := resp.Header.Get("Content-Type"); resp.StatusCode != http.StatusOK || !strings.HasPrefix(ct, "image/svg+xml") {
+		t.Errorf("status %d, content type %q", resp.StatusCode, ct)
 	}
 }
