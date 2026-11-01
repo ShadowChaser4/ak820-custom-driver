@@ -31,7 +31,7 @@ type previewResponse struct {
 
 func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUpload)
-	if err := r.ParseMultipartForm(maxUpload); err != nil {
+	if err := r.ParseMultipartForm(maxUpload); err != nil { //nolint:gosec // the body is capped by MaxBytesReader above
 		fail(w, http.StatusRequestEntityTooLarge, err)
 		return
 	}

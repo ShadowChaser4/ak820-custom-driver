@@ -9,6 +9,11 @@ linters:
     - staticcheck
     - unparam
   settings:
+    gosec:
+      excludes:
+        - G103 # the ioctls in internal/hidraw need unsafe
+        - G115 # byte protocols narrow integers on purpose
+        - G304 # paths come from sysfs, udev directories or the user's own flags
     revive:
       rules:
         - name: exported
@@ -20,6 +25,8 @@ linters:
         - name: receiver-naming
         - name: unused-parameter
   exclusions:
+    presets:
+      - std-error-handling # unchecked Close and Fprint
     rules:
       - path: _test\.go
         linters: [errcheck, gosec, unparam, revive]

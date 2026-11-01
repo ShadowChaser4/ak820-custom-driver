@@ -48,9 +48,8 @@ func legacyUnit() []hidraw.Info {
 }
 
 type fakeDev struct {
-	r       *rig
-	node    string
-	readErr error
+	r    *rig
+	node string
 }
 
 func (f *fakeDev) Write(p []byte) error {

@@ -47,7 +47,7 @@ func ParseDescriptor(b []byte) Descriptor {
 			if i+1 >= len(b) {
 				break
 			}
-			i += 3 + int(b[i+1])
+			i += 3 + int(b[i+1]) //nolint:gosec // i+1 is bounds-checked just above
 			continue
 		}
 		n := [4]int{0, 1, 2, 4}[p&3]

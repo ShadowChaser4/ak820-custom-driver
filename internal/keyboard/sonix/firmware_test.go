@@ -299,7 +299,7 @@ func TestFailedTransfersNeverCommit(t *testing.T) {
 // noAcks swallows every ACK.
 type noAcks struct{ *fw }
 
-func (n *noAcks) Write(p []byte) error { err := n.fw.Write(p); n.fw.acks = nil; return err }
+func (n *noAcks) Write(p []byte) error { err := n.fw.Write(p); n.acks = nil; return err }
 
 func TestAlignmentThatNeverLocksGivesUpWithAHumanMessage(t *testing.T) {
 	pl, n := onePic()

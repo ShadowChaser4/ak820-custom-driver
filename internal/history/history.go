@@ -57,11 +57,11 @@ func safe(name string) string {
 
 // Save stores frames and prunes to the newest Max entries.
 func Save(dir string, frames []animation.Frame, name string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
 	}
 	f := fmt.Sprintf("%s_%s.bin", time.Now().Format("20060102-150405"), safe(name))
-	if err := os.WriteFile(filepath.Join(dir, f), legacy.Encode(frames), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, f), legacy.Encode(frames), 0o600); err != nil {
 		return err
 	}
 	es, err := List(dir)

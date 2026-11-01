@@ -16,7 +16,10 @@ import (
 )
 
 // Width and Height are the size of the screen in pixels.
-const Width, Height = 128, 128
+const (
+	Width  = 128
+	Height = 128
+)
 
 // Fit says how a picture is mapped onto the square screen.
 type Fit int

@@ -53,13 +53,13 @@ func (a *app) serveUI(ctx context.Context, addr string, noOpen bool) error {
 	fmt.Fprintln(a.out, "ak820 is running. Open this address in your browser:\n  "+url)
 	fmt.Fprintln(a.out, "Nothing is written to the keyboard until you confirm in the browser. Press Ctrl-C to stop.")
 	if !noOpen && os.Getenv("DISPLAY")+os.Getenv("WAYLAND_DISPLAY") != "" {
-		if err := exec.CommandContext(ctx, "xdg-open", url).Start(); err != nil {
+		if err := exec.CommandContext(ctx, "xdg-open", url).Start(); err != nil { //nolint:gosec // fixed program; the URL is built above
 			fmt.Fprintf(a.errw, "could not open the browser (%v); open the address above yourself\n", err)
 		}
 	}
 	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	shutdownErr := make(chan error, 1)
-	go func() {
+	go func() { //nolint:gosec // shutdown starts after ctx ends, so its timeout cannot derive from ctx
 		<-ctx.Done()
 		// Requests share ctx, so a running upload has already been told to stop.
 		grace, cancel := context.WithTimeout(context.Background(), 5*time.Second)

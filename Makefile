@@ -17,7 +17,7 @@ vet:
 fmt: ## fail if any file needs gofmt
 	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "needs gofmt:"; echo "$$out"; exit 1; fi
 
-LINT_VERSION ?= latest
+LINT_VERSION ?= v2.15.0
 lint: ## golangci-lint, fetched on demand (not a module dependency)
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(LINT_VERSION) run ./...
 
