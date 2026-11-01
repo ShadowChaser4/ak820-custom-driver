@@ -1,0 +1,26 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: make fmt
+      - name: vet
+        run: make vet
+      - name: tests (race detector)
+        run: make test
+      - name: static builds for both architectures
+        run: |
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build -trimpath -o /dev/null ./cmd/ak820
+          done
+      - name: short fuzz run
+        run: make fuzz

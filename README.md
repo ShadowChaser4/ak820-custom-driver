@@ -9,17 +9,26 @@ Some firmware revisions expose different interfaces from the ones other tools ex
 > **Safety:** every CLI command that writes to the keyboard needs `--yes`, and every write in the web UI needs a confirm click.
 > Without that, the tool prints the target node and the exact bytes, then stops.
 
-## Quick start
+## Install and first run
 
-```sh
-CGO_ENABLED=0 go build -o ak820 ./cmd/ak820      # build
-sudo cp udev/70-ak820.rules /etc/udev/rules.d/    # one-time permissions, then replug (see below)
-./ak820 list                                      # what does my keyboard expose? (no device I/O)
-./ak820 ui                                        # or use the browser UI
-```
+1. **Get the program.** Download `ak820_<version>_linux_amd64.tar.gz` (or `arm64`) from the project's releases page and unpack it, or build it yourself (needs Go 1.22+):
+   ```sh
+   make install        # builds and installs to ~/.local/bin/ak820 (no sudo needed)
+   ```
+   Make sure `~/.local/bin` is on your `PATH` (`make install` tells you if it is not). If you just unpacked the archive, run it as `./ak820`; every hint the program prints uses the name you typed.
+2. **Check this computer.** Plug the keyboard in with the USB-C cable, slide the switch on the back to **USB**, then:
+   ```sh
+   ak820 setup
+   ```
+   It shows a checklist (keyboard found, permission rule installed, allowed to use it, layout recognised) and, for anything missing, the exact command to fix it. The one thing that needs `sudo` is installing the permission rule; `setup` prints that command for you and never runs `sudo` itself. Unplug and replug the keyboard afterwards.
+3. **Use it.**
+   ```sh
+   ak820               # opens the app in your browser: connect, pick a picture, send
+   ```
 
-The UI is the easiest way in: step 1 connects, step 2 picks a picture, step 3 sends it.
-From the terminal, on a `sonix` keyboard: `./ak820 time --yes` (connect and set the clock), then `./ak820 upload --yes picture.gif`.
+If anything goes wrong, run `ak820 setup`. If your keyboard is "not supported yet", run `ak820 report --issue` and paste the result into a new issue; that is all that is needed to add support.
+
+Several keyboards plugged in? Choose one with `ak820 --device 2 <command>` (or `AK820_DEVICE=2`).
 
 ## Status
 
@@ -36,26 +45,20 @@ The layout is detected from the HID report descriptors; run `./ak820 list` to se
 
 ## Requirements
 
-- Linux, Go 1.22 or newer (to build)
+- Linux (x86-64 or arm64). The release is a single static file with no dependencies.
 - The keyboard connected **by USB cable with the back switch in USB mode**. Bluetooth and the 2.4G dongle cannot reach the screen.
-
-## Build
-
-```sh
-git clone <this repo> && cd ak820-custom-driver
-CGO_ENABLED=0 go build -o ak820 ./cmd/ak820
-```
+- Go 1.22 or newer only if you build it yourself (`make build`, `make check`, `make release`).
 
 ## Permissions (one time)
 
-The tool opens `/dev/hidraw*` as your normal user. Install the udev rule and replug the keyboard:
+`ak820 setup` checks this for you. By hand, the rule lets your logged-in user open the keyboard's `/dev/hidraw*` nodes:
 
 ```sh
-sudo cp udev/70-ak820.rules /etc/udev/rules.d/
+ak820 setup --print-rule | sudo tee /etc/udev/rules.d/70-ak820.rules >/dev/null
 sudo udevadm control --reload && sudo udevadm trigger
 ```
 
-Then unplug and replug the cable. `ak820 list` should show `rw=true` on every node.
+Then unplug and replug the keyboard. (The same rule is in `udev/70-ak820.rules` in the source.)
 
 ## How to use
 
@@ -74,7 +77,7 @@ Example output (AK820 Pro, 0c45:800a):
 
 (The keyboard and consumer-control nodes are also listed.)
 
-`./ak820 report` prints the same information as a Markdown table, plus the raw descriptors. Paste it into a bug report.
+`ak820 report` prints the same information as a Markdown table, plus the raw descriptors. `ak820 report --issue` adds the program version and your system, ready to paste into a bug report.
 
 ### 2. Find the command channel (`probe`)
 
@@ -197,9 +200,28 @@ The token is in the URL fragment, which browsers do not send to the server.
 | `internal/sonix/` | feature-report protocol: clock sync, flash payload, alignment and chunked upload with per-chunk acknowledgement |
 | `internal/gallery/` | the embedded ready-made GIFs and their licence |
 | `internal/img/` | image and GIF decoding, 128×128 fit, RGB565, payload builder and parser |
-| `udev/70-ak820.rules` | permissions rule |
+| `internal/setup/` | the `setup` checklist and the embedded udev rule |
+| `internal/hw/` | opt-in tests that use a real keyboard (`-tags hardware`) |
+| `udev/70-ak820.rules` | permissions rule (kept identical to the embedded copy by a test) |
+| `docs/` | hardware test results, UI checklist |
 
 Run the tests with `go test ./...`. They include the real descriptors captured from a 0c45:800a unit.
+
+## Testing
+
+```sh
+make check          # gofmt + go vet + all tests with the race detector (what CI runs)
+make fuzz           # 10 s on each fuzz target (descriptor parser, payload parser, image decoder)
+```
+
+What the tests cover, and how they avoid needing a keyboard:
+
+- **No saved device numbers.** Enumeration is tested against fake sysfs trees (the real four-interface unit, the same unit after a replug with different `hidrawN` numbers, two keyboards, other vendors, broken nodes).
+- **Nothing is written without `--yes`.** Every CLI command is run against a fake keyboard that counts writes.
+- **The `sonix` protocol** is checked byte-for-byte against golden files and against a stateful fake of the firmware (the 64-packet ring counter that `IMAGE_CFG` does not reset, ACK on wrap, the 2 s watchdog). Uploads are checked from all 64 starting positions, and every failure (dropped or corrupt ACK, write error, dead control channel) must never be followed by a SAVE.
+- **The web page** is checked for consistency (every element the script uses exists, every API path it calls is routed, no external resources, no HTML injection); the API for token, `Host`/`Origin`, path traversal and size limits.
+- **Fuzzing** found and fixed a descriptor-parsing overflow; the failing input is kept as a regression seed. Pictures that claim a huge size are rejected before decoding.
+- **Real hardware** is opt-in and read-only by default: `go test -tags hardware -v ./internal/hw`. Writes need `AK820_HW_WRITE=1` (clock) or `AK820_HW_UPLOAD=1` (picture). See [docs/HARDWARE-TESTS.md](docs/HARDWARE-TESTS.md), which also lists what has been verified on real keyboards. Things automation cannot see (phone layout, light mode, keyboard-only use) are in [docs/UI-CHECKLIST.md](docs/UI-CHECKLIST.md).
 
 ## Credits
 
