@@ -39,5 +39,6 @@ The keyboard failed to connect on a USB hub shared with three other devices (`No
   code does not send. This tool follows the code, and that works on the keyboard above. If the clock does
   not change on your keyboard, those two details are the first things to try.
 - Whether a command can make the picture open by itself at startup.
+- Whether a clock sync, including Connect in the web UI, moves the screen from the picture to the clock.
 - Other projects disagree about the upload's slot byte (1, 2 or 3). This tool sends 3, which worked on the
   keyboard above. A report that it only shows briefly on another `0c45:800a` suggests trying slot 1 there.

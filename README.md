@@ -28,7 +28,7 @@ Some firmware revisions expose different interfaces from the ones other tools ex
    ```
 4. **See your picture after a restart.** When the keyboard starts up it shows its boot animation and then the clock, not your picture. The picture is still saved: press **Fn+Del** to open it, and **Fn+Del** again to go back to the clock.
 
-If anything goes wrong, run `ak820 setup`. If it says the keyboard isn't found while the keyboard is plugged in and lighting up, try a USB port on the computer itself instead of a hub. A busy hub can run out of bandwidth, and `dmesg` then shows `Not enough bandwidth` and `can't set config #1, error -28`. If your keyboard is "not supported yet", run `ak820 report --issue` and paste the result into a new issue; that is all that is needed to add support.
+If anything goes wrong, run `ak820 setup`. If it says the keyboard could not finish connecting, plug it into a USB port on the computer itself instead of a hub. A busy hub can run out of bandwidth, and `dmesg` then shows `Not enough bandwidth` and `can't set config #1, error -28`. If your keyboard is "not supported yet", run `ak820 report --issue` and paste the result into a new issue; that is all that is needed to add support.
 
 Several keyboards plugged in? Choose one with `ak820 --device 2 <command>` (or `AK820_DEVICE=2`).
 
