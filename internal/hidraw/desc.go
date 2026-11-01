@@ -17,6 +17,19 @@ func (d Desc) FeatBytes() int { return d.FeatBits / 8 }
 // Vendor reports whether the first usage page is vendor-defined (0xFF00-0xFFFF).
 func (d Desc) Vendor() bool { return d.Page >= 0xFF00 }
 
+const (
+	maxField = 1 << 16 // largest report size / count we believe (real ones are tiny)
+	maxBits  = 1 << 28 // 32 MiB: sums saturate here, so they can never overflow or go negative
+)
+
+func addBits(total, size, count int) int {
+	n := total + size*count // both factors <= 1<<16, so this cannot overflow a 64-bit int
+	if n > maxBits {
+		return maxBits
+	}
+	return n
+}
+
 // ParseDescriptor walks the short items of a report descriptor and sums the
 // Input / Output / Feature field sizes. Push/Pop are not handled (vendor
 // descriptors on this keyboard don't use them).
@@ -41,6 +54,9 @@ func ParseDescriptor(b []byte) Desc {
 		for k := 0; k < n; k++ {
 			v |= int(b[i+1+k]) << (8 * k)
 		}
+		if v < 0 || v > maxField {
+			v = maxField // an absurd size or count: clamp instead of overflowing
+		}
 		switch p & 0xFC {
 		case 0x04: // Usage Page
 			if !havePage {
@@ -53,11 +69,11 @@ func ParseDescriptor(b []byte) Desc {
 		case 0x84:
 			d.ReportIDs = true
 		case 0x80:
-			d.InBits += size * count
+			d.InBits = addBits(d.InBits, size, count)
 		case 0x90:
-			d.OutBits += size * count
+			d.OutBits = addBits(d.OutBits, size, count)
 		case 0xB0:
-			d.FeatBits += size * count
+			d.FeatBits = addBits(d.FeatBits, size, count)
 		}
 		i += 1 + n
 	}

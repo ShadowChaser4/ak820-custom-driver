@@ -32,10 +32,95 @@ func Load(path, fit string, bg color.Color) ([]Frame, error) {
 	return Decode(b, fit, bg)
 }
 
+// Limits protect against pictures that are tiny on disk but claim a huge size
+// (decompression bombs): the decoder would try to allocate all of it.
+const (
+	MaxPixels    = 25_000_000 // per picture (e.g. 5000x5000)
+	MaxGIFSide   = 2048       // GIF canvas width / height
+	MaxGIFFrames = 2000       // we only ever send the first 255
+)
+
+// countGIFFrames walks the GIF block structure (no pixel decoding) and counts
+// image descriptors. It returns -1 for data that is not a well-formed GIF stream.
+func countGIFFrames(b []byte) int {
+	if len(b) < 13 || (string(b[:6]) != "GIF87a" && string(b[:6]) != "GIF89a") {
+		return -1
+	}
+	i := 13
+	if b[10]&0x80 != 0 {
+		i += 3 << (uint(b[10]&7) + 1)
+	}
+	skip := func() bool { // sub-blocks until a zero-length terminator
+		for i < len(b) {
+			n := int(b[i])
+			i++
+			if n == 0 {
+				return true
+			}
+			i += n
+		}
+		return false
+	}
+	frames := 0
+	for i < len(b) {
+		switch b[i] {
+		case 0x3B: // trailer
+			return frames
+		case 0x21: // extension
+			i += 2
+			if !skip() {
+				return -1
+			}
+		case 0x2C: // image descriptor
+			if i+10 > len(b) {
+				return -1
+			}
+			flags := b[i+9]
+			i += 10
+			if flags&0x80 != 0 {
+				i += 3 << (uint(flags&7) + 1)
+			}
+			i++ // LZW minimum code size
+			if !skip() {
+				return -1
+			}
+			if frames++; frames > MaxGIFFrames {
+				return frames
+			}
+		default:
+			return -1
+		}
+	}
+	return frames
+}
+
 // Decode is Load for in-memory data.
 func Decode(data []byte, fit string, bg color.Color) ([]Frame, error) {
-	if g, err := gif.DecodeAll(bytes.NewReader(data)); err == nil {
+	if len(data) >= 6 && (string(data[:6]) == "GIF87a" || string(data[:6]) == "GIF89a") {
+		cfg, err := gif.DecodeConfig(bytes.NewReader(data))
+		if err != nil {
+			return nil, fmt.Errorf("this GIF could not be read: %w", err)
+		}
+		if cfg.Width > MaxGIFSide || cfg.Height > MaxGIFSide {
+			return nil, fmt.Errorf("this GIF is %dx%d pixels; the largest supported is %dx%d", cfg.Width, cfg.Height, MaxGIFSide, MaxGIFSide)
+		}
+		if n := countGIFFrames(data); n < 0 {
+			return nil, fmt.Errorf("this GIF could not be read")
+		} else if n > MaxGIFFrames {
+			return nil, fmt.Errorf("this GIF has more than %d frames; shorten it first", MaxGIFFrames)
+		}
+		g, err := gif.DecodeAll(bytes.NewReader(data))
+		if err != nil {
+			return nil, fmt.Errorf("this GIF could not be read: %w", err)
+		}
 		return fromGIF(g, fit, bg), nil
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("unsupported image (PNG, JPEG and GIF work): %w", err)
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width*cfg.Height > MaxPixels || cfg.Width > 1<<15 || cfg.Height > 1<<15 {
+		return nil, fmt.Errorf("this picture is %dx%d pixels, which is too large (limit %d million pixels)", cfg.Width, cfg.Height, MaxPixels/1_000_000)
 	}
 	im, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {

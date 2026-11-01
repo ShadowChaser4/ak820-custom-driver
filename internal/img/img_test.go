@@ -1,8 +1,12 @@
 package img
 
 import (
+	"bytes"
+	"encoding/binary"
+	"hash/crc32"
 	"image"
 	"image/color"
+	"strings"
 	"testing"
 )
 
@@ -77,4 +81,65 @@ func TestPayloadRoundTrip(t *testing.T) {
 	if _, err := ParsePayload(p[:300]); err == nil {
 		t.Error("truncated payload must error")
 	}
+}
+
+func TestHugeDeclaredSizeIsRejectedBeforeAllocating(t *testing.T) {
+	// A well-formed PNG header (correct checksum) that claims 20000 x 20000 pixels,
+	// with no pixel data at all: decoding it for real would try to allocate ~1.6 GB.
+	ihdr := []byte{0, 0, 0x4e, 0x20, 0, 0, 0x4e, 0x20, 8, 2, 0, 0, 0}
+	var png bytes.Buffer
+	png.WriteString("\x89PNG\r\n\x1a\n")
+	binary.Write(&png, binary.BigEndian, uint32(len(ihdr)))
+	png.WriteString("IHDR")
+	png.Write(ihdr)
+	binary.Write(&png, binary.BigEndian, crc32.ChecksumIEEE(append([]byte("IHDR"), ihdr...)))
+	if _, err := Decode(png.Bytes(), "cover", color.Black); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestGIFLimits(t *testing.T) {
+	// logical screen 4000x4000 with no frames
+	big := []byte("GIF89a\xa0\x0f\xa0\x0f\x00\x00\x00;")
+	if _, err := Decode(big, "cover", color.Black); err == nil {
+		t.Fatal("4000x4000 GIF must be refused")
+	}
+	if n := countGIFFrames([]byte("GIF89a\x01\x00\x01\x00\x00\x00\x00;")); n != 0 {
+		t.Errorf("empty GIF has %d frames", n)
+	}
+	for _, junk := range [][]byte{nil, []byte("GIF89a"), []byte("GIF89a\x01\x00\x01\x00\x00\x00\x00\x2c"), []byte("nope")} {
+		if n := countGIFFrames(junk); n >= 0 && len(junk) < 13 {
+			t.Errorf("%q -> %d", junk, n)
+		}
+	}
+}
+
+func FuzzDecode(f *testing.F) {
+	f.Add([]byte("\x89PNG\r\n\x1a\n"))
+	f.Add([]byte("GIF89a\x01\x00\x01\x00\x00\x00\x00;"))
+	f.Add([]byte("\xff\xd8\xff\xe0"))
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, b []byte) {
+		fr, err := Decode(b, "cover", color.Black)
+		if err == nil {
+			for _, x := range fr {
+				if x.Img.Bounds().Dx() != W || x.Img.Bounds().Dy() != H {
+					t.Fatalf("frame is %v", x.Img.Bounds())
+				}
+			}
+		}
+	})
+}
+
+func FuzzParsePayload(f *testing.F) {
+	ok := BuildPayload([]Frame{{Img: solid(color.RGBA{1, 2, 3, 255}, W, H), DelayMs: 100}})
+	f.Add(ok)
+	f.Add(ok[:300])
+	f.Add([]byte{255})
+	f.Fuzz(func(t *testing.T, b []byte) {
+		fr, err := ParsePayload(b)
+		if err == nil && len(fr) != int(b[0]) {
+			t.Fatalf("%d frames from a header that says %d", len(fr), b[0])
+		}
+	})
 }
