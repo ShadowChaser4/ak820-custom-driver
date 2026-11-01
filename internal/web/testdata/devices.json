@@ -14,11 +14,7 @@
     "clock": true,
     "flash": true
   },
-  "friendly": {
-    "level": "bad",
-    "message": "This is a permission setting on your computer. Open a terminal, run \"ak820 setup\" and follow the steps, then unplug and replug the keyboard.",
-    "title": "The keyboard is there, but this program is not allowed to use it"
-  },
+  "friendly": "\u003cmachine\u003e",
   "interfaces": [
     {
       "descriptor": "06 68 ff 09 61 a1 01 09 62 15 00 26 ff 00 95 40 75 08 81 02 09 63 15 00 26 ff 00 96 00 10 75 08 91 02 c0",
@@ -31,7 +27,7 @@
       "page": "0xFF68",
       "pid": "800a",
       "reportIds": false,
-      "rw": false,
+      "rw": "\u003cmachine\u003e",
       "vendor": true,
       "vid": "0c45"
     },
@@ -46,7 +42,7 @@
       "page": "0xFF13",
       "pid": "800a",
       "reportIds": false,
-      "rw": false,
+      "rw": "\u003cmachine\u003e",
       "vendor": true,
       "vid": "0c45"
     }

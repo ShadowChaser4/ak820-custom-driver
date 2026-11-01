@@ -10,21 +10,41 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/history"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/keyboard"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/keyboard/drivers"
 )
 
 const host = "127.0.0.1:9999"
 
-type dev struct{ w, o *int }
+// dev is a fake keyboard that answers every 4096 bytes like the firmware does.
+type dev struct {
+	w, o *int
+	st   *ackState
+}
 
-func (d dev) Write([]byte) error { *d.w++; return nil }
+type ackState struct{ bytes, acks int }
+
+func (d dev) Write(p []byte) error {
+	*d.w++
+	d.st.bytes += len(p)
+	for d.st.bytes >= 4096 {
+		d.st.bytes -= 4096
+		d.st.acks++
+	}
+	return nil
+}
 func (d dev) Read(context.Context, time.Duration) ([]byte, error) {
+	if d.st.acks > 0 {
+		d.st.acks--
+		return []byte{0x01, 0x5A, 0x02}, nil
+	}
 	return nil, os.ErrDeadlineExceeded
 }
 func (d dev) GetFeature(byte, int) ([]byte, error) { return make([]byte, 65), nil }
@@ -42,6 +62,7 @@ var (
 func rig(t *testing.T, connected bool) (*httptest.Server, *Server, *int, *int) {
 	t.Helper()
 	var writes, opens int
+	acks := &ackState{}
 	mk := func(node string, iface int, raw []byte) hidraw.Info {
 		return hidraw.Info{Node: node, VID: 0x0c45, PID: 0x800a, Iface: iface, Raw: raw, Descriptor: hidraw.ParseDescriptor(raw)}
 	}
@@ -49,7 +70,7 @@ func rig(t *testing.T, connected bool) (*httptest.Server, *Server, *int, *int) {
 		func() ([]hidraw.Info, error) {
 			return []hidraw.Info{mk("/dev/hidraw7", 2, ff68), mk("/dev/hidraw8", 3, ff13)}, nil
 		},
-		func(hidraw.Info) (keyboard.Device, error) { opens++; return dev{&writes, &opens}, nil },
+		func(hidraw.Info) (keyboard.Device, error) { opens++; return dev{&writes, &opens, acks}, nil },
 	)
 	s := &Server{Finder: finder, HistoryDir: t.TempDir(), Token: "tok", AllowedHosts: []string{host}}
 	if connected {
@@ -274,5 +295,113 @@ func TestDevicesHasFriendlyFields(t *testing.T) {
 	json.NewDecoder(r.Body).Decode(&d)
 	if d.Friendly.Title == "" || d.Friendly.Level == "" || d.Ready || d.Profile == "" || d.Features == nil {
 		t.Fatalf("%+v", d)
+	}
+}
+
+// sendEvents posts a real upload and returns the stream of events.
+func sendEvents(t *testing.T, s *Server, ctx context.Context, body string) []sendEvent {
+	t.Helper()
+	req := httptest.NewRequestWithContext(ctx, "POST", "/api/upload", strings.NewReader(body))
+	req.Host = host
+	req.Header.Set("X-Token", "tok")
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	var out []sendEvent
+	for _, line := range strings.Split(rec.Body.String(), "\n") {
+		if data, ok := strings.CutPrefix(line, "data: "); ok {
+			var e sendEvent
+			if err := json.Unmarshal([]byte(data), &e); err != nil {
+				t.Fatalf("%q: %v", data, err)
+			}
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func previewID(t *testing.T, ts *httptest.Server) string {
+	t.Helper()
+	body, ct := pngBody(t)
+	r := do(t, ts, "POST", "/api/preview", body, map[string]string{"Content-Type": ct})
+	var pv struct{ ID string }
+	if err := json.NewDecoder(r.Body).Decode(&pv); err != nil || pv.ID == "" {
+		t.Fatalf("preview: %v", err)
+	}
+	return pv.ID
+}
+
+func TestUploadStreamsProgressThenDoneAndAddsToHistory(t *testing.T) {
+	ts, s, _, _ := rig(t, true)
+	ev := sendEvents(t, s, context.Background(), `{"previewId":"`+previewID(t, ts)+`"}`)
+	last := ev[len(ev)-1]
+	if last.Event != "done" || last.Warning != "" {
+		t.Fatalf("%+v", last)
+	}
+	if len(ev) < 2 || ev[0].Total == 0 || ev[len(ev)-2].Done != ev[len(ev)-2].Total {
+		t.Errorf("progress events: %+v", ev)
+	}
+	if es, err := history.List(s.HistoryDir); err != nil || len(es) != 1 {
+		t.Errorf("history: %v %d", err, len(es))
+	}
+}
+
+func TestUploadWarnsWhenHistoryCannotBeSaved(t *testing.T) {
+	ts, s, _, _ := rig(t, true)
+	blocker := filepath.Join(t.TempDir(), "a-file")
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.HistoryDir = filepath.Join(blocker, "history")
+	ev := sendEvents(t, s, context.Background(), `{"previewId":"`+previewID(t, ts)+`"}`)
+	if last := ev[len(ev)-1]; last.Event != "done" || last.Warning == "" {
+		t.Fatalf("%+v", last)
+	}
+}
+
+// Closing the browser tab stops the transfer: it is reported, and nothing is recorded.
+func TestClientDisconnectStopsTheUpload(t *testing.T) {
+	ts, s, _, _ := rig(t, true)
+	id := previewID(t, ts)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ev := sendEvents(t, s, ctx, `{"previewId":"`+id+`"}`)
+	if len(ev) != 1 || ev[0].Event != "error" || !strings.Contains(ev[0].Error, "canceled") {
+		t.Fatalf("%+v", ev)
+	}
+	if es, _ := history.List(s.HistoryDir); len(es) != 0 {
+		t.Error("a stopped upload must not be added to history")
+	}
+}
+
+func TestDescribe(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "hidraw6")
+	if err := os.WriteFile(file, nil, 0o666); err != nil {
+		t.Fatal(err)
+	}
+	ok := []hidraw.Info{{Node: file}}
+	missing := []hidraw.Info{{Node: filepath.Join(t.TempDir(), "gone")}}
+	for _, c := range []struct {
+		name   string
+		ifaces []hidraw.Info
+		err    error
+		layout keyboard.Layout
+		ready  bool
+		level  Level
+		want   string
+	}{
+		{"none", nil, keyboard.ErrNoDevice, keyboard.LayoutUnknown, false, LevelBad, "USB-C"},
+		{"several", nil, &keyboard.MultipleError{N: 2}, keyboard.LayoutUnknown, false, LevelBad, "2 keyboards"},
+		{"no permission", missing, nil, keyboard.LayoutSonix, false, LevelBad, "ak820 setup"},
+		{"unknown layout", ok, nil, keyboard.LayoutUnknown, false, LevelWarn, "new issue"},
+		{"found", ok, nil, keyboard.LayoutSonix, false, LevelWarn, "Connect"},
+		{"connected", ok, nil, keyboard.LayoutSonix, true, LevelOK, "ready"},
+	} {
+		f := describe(c.ifaces, c.err, c.layout, c.ready)
+		if f.Level != c.level || !strings.Contains(f.Message, c.want) {
+			t.Errorf("%s: %+v", c.name, f)
+		}
 	}
 }

@@ -32,6 +32,8 @@ func normalise(t *testing.T, raw []byte) []byte {
 				switch k {
 				case "id":
 					n[k] = "<id>"
+				case "rw", "friendly": // depend on which device nodes this machine has; see TestDescribe
+					n[k] = "<machine>"
 				case "url":
 					n[k] = fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(e.(string))))
 				default:

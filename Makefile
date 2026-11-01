@@ -25,8 +25,8 @@ check: fmt vet test ## tests and vet; CI also runs lint
 
 fuzz: ## 10 seconds on each fuzz target
 	go test ./internal/hidraw -run XXX -fuzz ^FuzzParseDescriptor$$ -fuzztime 10s
-	go test ./internal/img -run XXX -fuzz ^FuzzParsePayload$$ -fuzztime 10s
-	go test ./internal/img -run XXX -fuzz ^FuzzDecode$$ -fuzztime 10s
+	go test ./internal/keyboard/legacy -run XXX -fuzz ^FuzzDecode$$ -fuzztime 10s
+	go test ./internal/animation -run XXX -fuzz ^FuzzDecode$$ -fuzztime 10s
 
 install: build ## install to $(PREFIX)/bin (default ~/.local/bin, no sudo needed)
 	install -Dm755 ak820 $(PREFIX)/bin/ak820
