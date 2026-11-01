@@ -19,10 +19,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/animation"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/core"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/history"
-	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/setup"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/web"
 )
@@ -295,7 +295,11 @@ func (a *app) cmdUpload(args []string) error {
 	if fs.NArg() != 1 {
 		return fmt.Errorf("usage: ak820 upload [flags] <image>")
 	}
-	frames, err := img.Load(fs.Arg(0), *fit, img.ParseColor(*bg))
+	fitMode, err := animation.ParseFit(*fit)
+	if err != nil {
+		return err
+	}
+	frames, err := animation.Load(fs.Arg(0), fitMode, animation.ParseColor(*bg))
 	if err != nil {
 		return err
 	}
@@ -305,7 +309,7 @@ func (a *app) cmdUpload(args []string) error {
 		}
 	}
 	frames = frames[:min(len(frames), *maxFrames, 255)]
-	payload := img.BuildPayload(frames)
+	payload := animation.BuildPayload(frames)
 	if *preview != "" {
 		if err := savePNG(*preview, frames[0].Img); err != nil {
 			return err

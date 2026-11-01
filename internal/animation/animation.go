@@ -1,5 +1,5 @@
-// Package img turns images/GIFs into the AK820 screen payload (128x128 RGB565-LE).
-package img
+// Package animation turns images and GIFs into 128x128 frames for the keyboard screen.
+package animation
 
 import (
 	"bytes"
@@ -15,16 +15,40 @@ import (
 	"strings"
 )
 
-const W, H = 128, 128
+// Width and Height are the size of the screen in pixels.
+const Width, Height = 128, 128
 
+// Fit says how a picture is mapped onto the square screen.
+type Fit int
+
+// The ways a picture can be fitted.
+const (
+	FitCover   Fit = iota // fill the screen, cropping the edges
+	FitContain            // show everything, adding borders
+	FitStretch            // ignore the aspect ratio
+)
+
+// ParseFit reads a fit name. The empty string means FitCover.
+func ParseFit(s string) (Fit, error) {
+	switch s {
+	case "", "cover":
+		return FitCover, nil
+	case "contain":
+		return FitContain, nil
+	case "stretch":
+		return FitStretch, nil
+	}
+	return FitCover, fmt.Errorf("unknown fit %q (use cover, contain or stretch)", s)
+}
+
+// Frame is one picture on the screen and how long it stays there.
 type Frame struct {
-	Img     *image.RGBA // W x H, opaque
+	Img     *image.RGBA // Width x Height, opaque
 	DelayMs int
 }
 
 // Load decodes a PNG/JPEG/GIF file and fits every frame to 128x128.
-// fit is "cover", "contain" or "stretch".
-func Load(path, fit string, bg color.Color) ([]Frame, error) {
+func Load(path string, fit Fit, bg color.Color) ([]Frame, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -95,7 +119,7 @@ func countGIFFrames(b []byte) int {
 }
 
 // Decode is Load for in-memory data.
-func Decode(data []byte, fit string, bg color.Color) ([]Frame, error) {
+func Decode(data []byte, fit Fit, bg color.Color) ([]Frame, error) {
 	if len(data) >= 6 && (string(data[:6]) == "GIF87a" || string(data[:6]) == "GIF89a") {
 		cfg, err := gif.DecodeConfig(bytes.NewReader(data))
 		if err != nil {
@@ -126,7 +150,7 @@ func Decode(data []byte, fit string, bg color.Color) ([]Frame, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unsupported image (PNG, JPEG and GIF work): %w", err)
 	}
-	return []Frame{{Fit(im, fit, bg), 100}}, nil
+	return []Frame{{Scale(im, fit, bg), 100}}, nil
 }
 
 // ParseColor accepts black, white or RRGGBB / #RRGGBB (black on anything else).
@@ -151,14 +175,14 @@ func ParsePayload(p []byte) ([]Frame, error) {
 		return nil, fmt.Errorf("payload too short")
 	}
 	n := int(p[0])
-	if len(p) < 256+n*W*H*2 {
-		return nil, fmt.Errorf("payload truncated: %d frames need %d bytes, have %d", n, 256+n*W*H*2, len(p))
+	if len(p) < 256+n*Width*Height*2 {
+		return nil, fmt.Errorf("payload truncated: %d frames need %d bytes, have %d", n, 256+n*Width*Height*2, len(p))
 	}
 	out := make([]Frame, 0, n)
 	for k := 0; k < n; k++ {
-		raw := p[256+k*W*H*2 : 256+(k+1)*W*H*2]
-		im := image.NewRGBA(image.Rect(0, 0, W, H))
-		for j := 0; j < W*H; j++ {
+		raw := p[256+k*Width*Height*2 : 256+(k+1)*Width*Height*2]
+		im := image.NewRGBA(image.Rect(0, 0, Width, Height))
+		for j := 0; j < Width*Height; j++ {
 			v := int(raw[2*j]) | int(raw[2*j+1])<<8
 			im.Pix[4*j] = uint8((v >> 11) * 255 / 31)
 			im.Pix[4*j+1] = uint8((v >> 5 & 63) * 255 / 63)
@@ -189,7 +213,7 @@ func Scaled(im *image.RGBA, f int) *image.RGBA {
 	return out
 }
 
-func fromGIF(g *gif.GIF, fit string, bg color.Color) []Frame {
+func fromGIF(g *gif.GIF, fit Fit, bg color.Color) []Frame {
 	w, h := g.Config.Width, g.Config.Height
 	canvas := image.NewRGBA(image.Rect(0, 0, w, h))
 	var out []Frame
@@ -206,7 +230,7 @@ func fromGIF(g *gif.GIF, fit string, bg color.Color) []Frame {
 		if i < len(g.Delay) && g.Delay[i] > 0 {
 			d = g.Delay[i] * 10
 		}
-		out = append(out, Frame{Fit(snap, fit, bg), d})
+		out = append(out, Frame{Scale(snap, fit, bg), d})
 		if i < len(g.Disposal) {
 			switch g.Disposal[i] {
 			case gif.DisposalBackground:
@@ -219,23 +243,23 @@ func fromGIF(g *gif.GIF, fit string, bg color.Color) []Frame {
 	return out
 }
 
-// Fit scales src into a 128x128 opaque canvas over bg.
-func Fit(src image.Image, fit string, bg color.Color) *image.RGBA {
-	dst := image.NewRGBA(image.Rect(0, 0, W, H))
+// Scale scales src into a 128x128 opaque canvas over bg.
+func Scale(src image.Image, fit Fit, bg color.Color) *image.RGBA {
+	dst := image.NewRGBA(image.Rect(0, 0, Width, Height))
 	draw.Draw(dst, dst.Bounds(), image.NewUniform(bg), image.Point{}, draw.Src)
 	sb := src.Bounds()
 	sw, sh := float64(sb.Dx()), float64(sb.Dy())
 	srcR := [4]float64{float64(sb.Min.X), float64(sb.Min.Y), float64(sb.Max.X), float64(sb.Max.Y)}
-	dr := image.Rect(0, 0, W, H)
+	dr := image.Rect(0, 0, Width, Height)
 	switch fit {
-	case "stretch":
-	case "contain":
-		s := math.Min(W/sw, H/sh)
+	case FitStretch:
+	case FitContain:
+		s := math.Min(Width/sw, Height/sh)
 		w, h := max(1, int(math.Round(sw*s))), max(1, int(math.Round(sh*s)))
-		dr = image.Rect((W-w)/2, (H-h)/2, (W-w)/2+w, (H-h)/2+h)
+		dr = image.Rect((Width-w)/2, (Height-h)/2, (Width-w)/2+w, (Height-h)/2+h)
 	default: // cover
-		s := math.Max(W/sw, H/sh)
-		cw, ch := W/s, H/s
+		s := math.Max(Width/sw, Height/sh)
+		cw, ch := Width/s, Height/s
 		srcR[0] += (sw - cw) / 2
 		srcR[1] += (sh - ch) / 2
 		srcR[2], srcR[3] = srcR[0]+cw, srcR[1]+ch
@@ -275,11 +299,11 @@ func scale(dst *image.RGBA, dr image.Rectangle, src image.Image, sr [4]float64) 
 			}
 			fg := color.RGBA64{uint16(r / wsum), uint16(g / wsum), uint16(b / wsum), uint16(a / wsum)}
 			bgc := dst.RGBAAt(x, y)
-			br, bg_, bb, _ := bgc.RGBA()
+			br, bgG, bb, _ := bgc.RGBA()
 			inv := 0xFFFF - uint32(fg.A)
 			dst.SetRGBA(x, y, color.RGBA{
 				uint8((uint32(fg.R) + br*inv/0xFFFF) >> 8),
-				uint8((uint32(fg.G) + bg_*inv/0xFFFF) >> 8),
+				uint8((uint32(fg.G) + bgG*inv/0xFFFF) >> 8),
 				uint8((uint32(fg.B) + bb*inv/0xFFFF) >> 8),
 				255})
 		}

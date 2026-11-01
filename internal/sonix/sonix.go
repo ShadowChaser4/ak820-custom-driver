@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/animation"
 )
 
 const (
@@ -114,7 +114,7 @@ func (p *Port) SyncClock(now time.Time) error {
 // BuildPayload makes the flash payload: 256-byte header (frame count, then one
 // delay byte per frame in 5 ms units, minimum 16) + RGB565-LE frames, zero-padded
 // to whole 4096-byte chunks. Returns the payload and the chunk count.
-func BuildPayload(frames []img.Frame) ([]byte, int, error) {
+func BuildPayload(frames []animation.Frame) ([]byte, int, error) {
 	if len(frames) == 0 {
 		return nil, 0, errors.New("no frames")
 	}
@@ -128,7 +128,7 @@ func BuildPayload(frames []img.Frame) ([]byte, int, error) {
 	}
 	out := hdr
 	for _, f := range frames {
-		out = append(out, img.RGB565LE(f.Img)...)
+		out = append(out, animation.RGB565LE(f.Img)...)
 	}
 	chunks := (len(out) + ChunkSize - 1) / ChunkSize
 	out = append(out, make([]byte, chunks*ChunkSize-len(out))...)

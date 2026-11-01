@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/animation"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files")
@@ -57,7 +57,7 @@ func TestGoldenFrames(t *testing.T) {
 
 func TestGoldenPayloadHeaderAndFirstPixels(t *testing.T) {
 	red, blue := solid(color.RGBA{255, 0, 0, 255}), solid(color.RGBA{0, 0, 255, 255})
-	p, chunks, err := BuildPayload([]img.Frame{{Img: red, DelayMs: 100}, {Img: blue, DelayMs: 300}})
+	p, chunks, err := BuildPayload([]animation.Frame{{Img: red, DelayMs: 100}, {Img: blue, DelayMs: 300}})
 	if err != nil || chunks != 17 {
 		t.Fatalf("%v %d", err, chunks)
 	}
@@ -162,7 +162,7 @@ func (f *fw) ReadAck(t time.Duration) ([]byte, error) {
 }
 
 func onePic() ([]byte, int) {
-	p, n, _ := BuildPayload([]img.Frame{{Img: solid(color.RGBA{0, 200, 0, 255}), DelayMs: 100}})
+	p, n, _ := BuildPayload([]animation.Frame{{Img: solid(color.RGBA{0, 200, 0, 255}), DelayMs: 100}})
 	return p, n
 }
 

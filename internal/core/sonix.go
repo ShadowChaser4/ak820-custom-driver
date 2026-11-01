@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/animation"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
-	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/sonix"
 )
 
@@ -99,7 +99,7 @@ func (c *Core) sonixClock(ctl, dat hidraw.Info, now time.Time, dry bool) (*SendR
 }
 
 func (c *Core) sonixUpload(ctl, dat hidraw.Info, payload []byte, dry bool, progress func(done, total int)) (*SendResult, error) {
-	frames, err := img.ParsePayload(payload)
+	frames, err := animation.ParsePayload(payload)
 	if err != nil {
 		return nil, fmt.Errorf("bad picture data: %w", err)
 	}

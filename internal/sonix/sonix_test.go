@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/animation"
 )
 
 func init() { sleep = func(time.Duration) {} }
@@ -54,7 +54,7 @@ func (f *fakeData) ReadAck(time.Duration) ([]byte, error) {
 }
 
 func solid(c color.RGBA) *image.RGBA {
-	im := image.NewRGBA(image.Rect(0, 0, img.W, img.H))
+	im := image.NewRGBA(image.Rect(0, 0, animation.Width, animation.Height))
 	for i := 0; i < len(im.Pix); i += 4 {
 		im.Pix[i], im.Pix[i+1], im.Pix[i+2], im.Pix[i+3] = c.R, c.G, c.B, c.A
 	}
@@ -101,7 +101,7 @@ func TestClockFramesMatchReference(t *testing.T) {
 }
 
 func TestBuildPayloadShape(t *testing.T) {
-	fr := []img.Frame{{Img: solid(color.RGBA{255, 0, 0, 255}), DelayMs: 100}, {Img: solid(color.RGBA{0, 0, 255, 255}), DelayMs: 10}}
+	fr := []animation.Frame{{Img: solid(color.RGBA{255, 0, 0, 255}), DelayMs: 100}, {Img: solid(color.RGBA{0, 0, 255, 255}), DelayMs: 10}}
 	p, chunks, err := BuildPayload(fr)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestBuildPayloadLimits(t *testing.T) {
 	if _, _, err := BuildPayload(nil); err == nil {
 		t.Error("no frames must fail")
 	}
-	many := make([]img.Frame, 256)
+	many := make([]animation.Frame, 256)
 	if _, _, err := BuildPayload(many); err == nil {
 		t.Error("256 frames must fail")
 	}
@@ -144,7 +144,7 @@ func TestSyncClockSendsFourFramesInOrder(t *testing.T) {
 func TestUploadCommitsOnlyAfterEveryChunkIsAcked(t *testing.T) {
 	c, d := &fakeCtrl{}, &fakeData{acks: true}
 	p := &Port{C: c, D: d}
-	pl, n, _ := BuildPayload([]img.Frame{{Img: solid(color.RGBA{0, 255, 0, 255}), DelayMs: 100}})
+	pl, n, _ := BuildPayload([]animation.Frame{{Img: solid(color.RGBA{0, 255, 0, 255}), DelayMs: 100}})
 	done := 0
 	if err := p.Upload(pl, n, func(a, b int) { done = a }); err != nil {
 		t.Fatal(err)
@@ -161,7 +161,7 @@ func TestUploadCommitsOnlyAfterEveryChunkIsAcked(t *testing.T) {
 func TestUploadWithoutAcksNeverSaves(t *testing.T) {
 	c, d := &fakeCtrl{}, &fakeData{acks: false}
 	p := &Port{C: c, D: d}
-	pl, n, _ := BuildPayload([]img.Frame{{Img: solid(color.RGBA{}), DelayMs: 100}})
+	pl, n, _ := BuildPayload([]animation.Frame{{Img: solid(color.RGBA{}), DelayMs: 100}})
 	if err := p.Upload(pl, n, nil); err == nil {
 		t.Fatal("expected failure")
 	}

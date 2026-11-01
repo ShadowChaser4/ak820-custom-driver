@@ -1,4 +1,4 @@
-package img
+package animation
 
 import (
 	"bytes"
@@ -34,25 +34,25 @@ func TestRGB565LE(t *testing.T) {
 
 func TestFitKeepsColourAndSize(t *testing.T) {
 	red := color.RGBA{255, 0, 0, 255}
-	for _, fit := range []string{"cover", "contain", "stretch"} {
-		out := Fit(solid(red, 300, 100), fit, color.Black)
-		if out.Bounds().Dx() != W || out.Bounds().Dy() != H {
-			t.Fatalf("%s size %v", fit, out.Bounds())
+	for _, fit := range []Fit{FitCover, FitContain, FitStretch} {
+		out := Scale(solid(red, 300, 100), fit, color.Black)
+		if out.Bounds().Dx() != Width || out.Bounds().Dy() != Height {
+			t.Fatalf("%d size %v", fit, out.Bounds())
 		}
-		if fit == "contain" {
+		if fit == FitContain {
 			if out.RGBAAt(64, 2) != (color.RGBA{0, 0, 0, 255}) || out.RGBAAt(64, 64) != red {
 				t.Errorf("contain: bars/centre wrong: %v %v", out.RGBAAt(64, 2), out.RGBAAt(64, 64))
 			}
 		} else if out.RGBAAt(0, 0) != red || out.RGBAAt(127, 127) != red {
-			t.Errorf("%s corners %v %v", fit, out.RGBAAt(0, 0), out.RGBAAt(127, 127))
+			t.Errorf("%d corners %v %v", fit, out.RGBAAt(0, 0), out.RGBAAt(127, 127))
 		}
 	}
 }
 
 func TestBuildPayload(t *testing.T) {
-	f := Frame{solid(color.RGBA{0, 0, 0, 255}, W, H), 100}
+	f := Frame{solid(color.RGBA{0, 0, 0, 255}, Width, Height), 100}
 	p := BuildPayload([]Frame{f, f, f})
-	if len(p) != 256+3*W*H*2 {
+	if len(p) != 256+3*Width*Height*2 {
 		t.Fatalf("len %d", len(p))
 	}
 	// count, delays of frames 0..N-2 in 2 ms units, terminator, then 0xFF fill
@@ -65,8 +65,8 @@ func TestBuildPayload(t *testing.T) {
 }
 
 func TestPayloadRoundTrip(t *testing.T) {
-	a := solid(color.RGBA{255, 0, 0, 255}, W, H)
-	b := solid(color.RGBA{0, 0, 255, 255}, W, H)
+	a := solid(color.RGBA{255, 0, 0, 255}, Width, Height)
+	b := solid(color.RGBA{0, 0, 255, 255}, Width, Height)
 	p := BuildPayload([]Frame{{a, 100}, {b, 200}})
 	fr, err := ParsePayload(p)
 	if err != nil || len(fr) != 2 {
@@ -93,7 +93,7 @@ func TestHugeDeclaredSizeIsRejectedBeforeAllocating(t *testing.T) {
 	png.WriteString("IHDR")
 	png.Write(ihdr)
 	binary.Write(&png, binary.BigEndian, crc32.ChecksumIEEE(append([]byte("IHDR"), ihdr...)))
-	if _, err := Decode(png.Bytes(), "cover", color.Black); err == nil || !strings.Contains(err.Error(), "too large") {
+	if _, err := Decode(png.Bytes(), FitCover, color.Black); err == nil || !strings.Contains(err.Error(), "too large") {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -101,7 +101,7 @@ func TestHugeDeclaredSizeIsRejectedBeforeAllocating(t *testing.T) {
 func TestGIFLimits(t *testing.T) {
 	// logical screen 4000x4000 with no frames
 	big := []byte("GIF89a\xa0\x0f\xa0\x0f\x00\x00\x00;")
-	if _, err := Decode(big, "cover", color.Black); err == nil {
+	if _, err := Decode(big, FitCover, color.Black); err == nil {
 		t.Fatal("4000x4000 GIF must be refused")
 	}
 	if n := countGIFFrames([]byte("GIF89a\x01\x00\x01\x00\x00\x00\x00;")); n != 0 {
@@ -120,10 +120,10 @@ func FuzzDecode(f *testing.F) {
 	f.Add([]byte("\xff\xd8\xff\xe0"))
 	f.Add([]byte{})
 	f.Fuzz(func(t *testing.T, b []byte) {
-		fr, err := Decode(b, "cover", color.Black)
+		fr, err := Decode(b, FitCover, color.Black)
 		if err == nil {
 			for _, x := range fr {
-				if x.Img.Bounds().Dx() != W || x.Img.Bounds().Dy() != H {
+				if x.Img.Bounds().Dx() != Width || x.Img.Bounds().Dy() != Height {
 					t.Fatalf("frame is %v", x.Img.Bounds())
 				}
 			}
@@ -132,7 +132,7 @@ func FuzzDecode(f *testing.F) {
 }
 
 func FuzzParsePayload(f *testing.F) {
-	ok := BuildPayload([]Frame{{Img: solid(color.RGBA{1, 2, 3, 255}, W, H), DelayMs: 100}})
+	ok := BuildPayload([]Frame{{Img: solid(color.RGBA{1, 2, 3, 255}, Width, Height), DelayMs: 100}})
 	f.Add(ok)
 	f.Add(ok[:300])
 	f.Add([]byte{255})
@@ -142,4 +142,15 @@ func FuzzParsePayload(f *testing.F) {
 			t.Fatalf("%d frames from a header that says %d", len(fr), b[0])
 		}
 	})
+}
+
+func TestParseFit(t *testing.T) {
+	for in, want := range map[string]Fit{"": FitCover, "cover": FitCover, "contain": FitContain, "stretch": FitStretch} {
+		if got, err := ParseFit(in); err != nil || got != want {
+			t.Errorf("ParseFit(%q) = %v, %v", in, got, err)
+		}
+	}
+	if _, err := ParseFit("zoom"); err == nil {
+		t.Error("an unknown fit must be an error")
+	}
 }

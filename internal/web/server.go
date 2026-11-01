@@ -25,11 +25,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/animation"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/core"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/gallery"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/history"
-	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
 )
 
 //go:embed static
@@ -257,7 +257,7 @@ func (s *Server) target(w http.ResponseWriter, r *http.Request) {
 
 // ---- preview / upload -----------------------------------------------------------
 
-func dataURL(im *img.Frame) string {
+func dataURL(im *animation.Frame) string {
 	var b bytes.Buffer
 	_ = png.Encode(&b, im.Img)
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(b.Bytes())
@@ -288,10 +288,11 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 // makePreview decodes data, builds the payload and answers with exactly the
 // frames that will be sent (decoded back from the payload).
 func (s *Server) makePreview(w http.ResponseWriter, data []byte, name, fit, bg string, delay, mf int) {
-	if fit != "contain" && fit != "stretch" {
-		fit = "cover"
+	mode, err := animation.ParseFit(fit)
+	if err != nil {
+		mode = animation.FitCover // the page only sends known values
 	}
-	frames, err := img.Decode(data, fit, img.ParseColor(bg))
+	frames, err := animation.Decode(data, mode, animation.ParseColor(bg))
 	if err != nil {
 		fail(w, 400, err)
 		return
@@ -307,8 +308,8 @@ func (s *Server) makePreview(w http.ResponseWriter, data []byte, name, fit, bg s
 	if len(frames) > mf {
 		frames = frames[:mf]
 	}
-	payload := img.BuildPayload(frames)
-	back, err := img.ParsePayload(payload)
+	payload := animation.BuildPayload(frames)
+	back, err := animation.ParsePayload(payload)
 	if err != nil {
 		fail(w, 500, err)
 		return
@@ -341,7 +342,7 @@ func (s *Server) galleryThumb(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, err)
 		return
 	}
-	fr, err := img.Decode(data, "stretch", img.ParseColor("black"))
+	fr, err := animation.Decode(data, animation.FitStretch, animation.ParseColor("black"))
 	if err != nil || len(fr) == 0 {
 		fail(w, 500, fmt.Errorf("could not read animation"))
 		return
@@ -454,13 +455,13 @@ func (s *Server) histList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, es)
 }
 
-func (s *Server) histFrames(w http.ResponseWriter, r *http.Request) ([]byte, []img.Frame, bool) {
+func (s *Server) histFrames(w http.ResponseWriter, r *http.Request) ([]byte, []animation.Frame, bool) {
 	p, err := history.Load(s.Core.HistoryDir(), r.URL.Query().Get("id"))
 	if err != nil {
 		fail(w, 404, err)
 		return nil, nil, false
 	}
-	fr, err := img.ParsePayload(p)
+	fr, err := animation.ParsePayload(p)
 	if err != nil {
 		fail(w, 500, err)
 		return nil, nil, false
@@ -484,7 +485,7 @@ func (s *Server) histGIF(w http.ResponseWriter, r *http.Request) {
 	}
 	g := &gif.GIF{LoopCount: 0}
 	for _, f := range fr {
-		big := img.Scaled(f.Img, 2)
+		big := animation.Scaled(f.Img, 2)
 		pm := imagePaletted(big)
 		g.Image = append(g.Image, pm)
 		g.Delay = append(g.Delay, max(1, f.DelayMs/10))

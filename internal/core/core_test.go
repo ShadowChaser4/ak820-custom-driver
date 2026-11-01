@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/animation"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
-	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
 )
 
 func desc(s string) []byte {
@@ -194,8 +194,8 @@ func TestUploadDryNeedsNoDeviceAndUsesSavedTarget(t *testing.T) {
 }
 
 func validPayload() []byte {
-	im := image.NewRGBA(image.Rect(0, 0, img.W, img.H))
-	return img.BuildPayload([]img.Frame{{Img: im, DelayMs: 100}})
+	im := image.NewRGBA(image.Rect(0, 0, animation.Width, animation.Height))
+	return animation.BuildPayload([]animation.Frame{{Img: im, DelayMs: 100}})
 }
 
 func TestClockDryDoesNothingAndRealConfirmsTarget(t *testing.T) {

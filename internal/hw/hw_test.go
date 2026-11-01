@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/animation"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/core"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/gallery"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
-	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
 )
 
 // Run:  go test -tags hardware -v ./internal/hw
@@ -83,12 +83,12 @@ func TestWriteUploadPicture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frames, err := img.Decode(data, "cover", img.ParseColor("black"))
+	frames, err := animation.Decode(data, animation.FitCover, animation.ParseColor("black"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	last := 0
-	if _, err := c.Upload(core.Target{}, img.BuildPayload(frames), false, func(d, n int) { last = d * 100 / n }); err != nil {
+	if _, err := c.Upload(core.Target{}, animation.BuildPayload(frames), false, func(d, n int) { last = d * 100 / n }); err != nil {
 		t.Fatalf("upload failed at %d%%: %v", last, err)
 	}
 	t.Log("upload finished. LOOK AT THE KEYBOARD SCREEN, then unplug and replug and look again.")
