@@ -2,10 +2,9 @@ package main
 
 import (
 	"bytes"
-	"errors"
+	"context"
 	"fmt"
 	"image"
-	"image/color"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -14,8 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ShadowChaser4/ak820-custom-driver/internal/core"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/keyboard"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/keyboard/drivers"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/setup"
 )
 
@@ -39,8 +39,6 @@ func vdesc(page uint16, in, out, feat int) []byte {
 	field(feat, 0xb1, 0x02)
 	return append(b, 0xc0)
 }
-
-type unit struct{ ifs []hidraw.Info }
 
 // sonixUnit is the real 0c45:800a layout (FF68 4096 B out + FF13 64 B feature).
 // Nodes are real temp files so Accessible() is true.
@@ -74,12 +72,12 @@ type counters struct {
 }
 
 func (f fakeDev) Write(p []byte) error { f.w.writes++; f.w.add(len(p)); return nil }
-func (f fakeDev) ReadTimeout(time.Duration) ([]byte, error) {
+func (f fakeDev) Read(context.Context, time.Duration) ([]byte, error) {
 	if f.w.acks > 0 {
 		f.w.acks--
 		return []byte{0x01, 0x5A, 0x02}, nil
 	}
-	return nil, nil
+	return nil, os.ErrDeadlineExceeded
 }
 func (f fakeDev) GetFeature(byte, int) ([]byte, error) { return make([]byte, 65), nil }
 func (f fakeDev) SetFeature(p []byte, n int) error {
@@ -95,6 +93,7 @@ type rig struct {
 	a        *app
 	out, err *bytes.Buffer
 	n        *counters
+	open     keyboard.Opener
 	uiAddr   string
 	uiNoOpen bool
 	uiCalled bool
@@ -103,13 +102,13 @@ type rig struct {
 func newRig(t *testing.T, ifs []hidraw.Info) *rig {
 	t.Helper()
 	r := &rig{out: &bytes.Buffer{}, err: &bytes.Buffer{}, n: &counters{}}
-	c := &core.Core{
-		Enumerate: func() ([]hidraw.Info, error) { return ifs, nil },
-		OpenDev:   func(hidraw.Info) (core.DevIO, error) { r.n.opens++; return fakeDev{r.n}, nil },
-		DataDir:   t.TempDir(),
-	}
-	r.a = &app{c: c, out: r.out, errw: r.err, ruleDirs: []string{t.TempDir()}}
-	r.a.ui = func(addr string, noOpen bool) error {
+	r.open = func(hidraw.Info) (keyboard.Device, error) { r.n.opens++; return fakeDev{r.n}, nil }
+	finder := drivers.NewFinder(
+		func() ([]hidraw.Info, error) { return ifs, nil },
+		func(i hidraw.Info) (keyboard.Device, error) { return r.open(i) },
+	)
+	r.a = &app{finder: finder, historyDir: t.TempDir(), out: r.out, errw: r.err, ruleDirs: []string{t.TempDir()}}
+	r.a.ui = func(_ context.Context, addr string, noOpen bool) error {
 		r.uiCalled, r.uiAddr, r.uiNoOpen = true, addr, noOpen
 		return nil
 	}
@@ -126,7 +125,6 @@ func testPNG(t *testing.T) string {
 	f, _ := os.Create(p)
 	_ = png.Encode(f, im)
 	f.Close()
-	_ = color.Black
 	return p
 }
 
@@ -146,7 +144,7 @@ func TestNoCommandWritesWithoutYes(t *testing.T) {
 	}
 	for _, c := range cases {
 		r := newRig(t, sonixUnit(t, "1-1", 0x800A))
-		if code := r.a.run(c.args); code != c.code {
+		if code := r.a.run(context.Background(), c.args); code != c.code {
 			t.Errorf("%v: exit %d, want %d\nout: %s\nerr: %s", c.args, code, c.code, r.out, r.err)
 		}
 		if r.n.opens != 0 || r.n.writes != 0 || r.n.feats != 0 {
@@ -158,7 +156,7 @@ func TestNoCommandWritesWithoutYes(t *testing.T) {
 func TestDryRunTellsYouNothingWasSent(t *testing.T) {
 	for _, args := range [][]string{{"time"}, {"upload", testPNG(t)}} {
 		r := newRig(t, sonixUnit(t, "1-1", 0x800A))
-		r.a.run(args)
+		r.a.run(context.Background(), args)
 		if !strings.Contains(r.out.String(), "nothing was sent") || !strings.Contains(r.out.String(), "--yes") {
 			t.Errorf("%v: %q", args, r.out)
 		}
@@ -167,7 +165,7 @@ func TestDryRunTellsYouNothingWasSent(t *testing.T) {
 
 func TestTimeYesSendsTheFourClockFrames(t *testing.T) {
 	r := newRig(t, sonixUnit(t, "1-1", 0x800A))
-	if code := r.a.run([]string{"time", "--yes"}); code != 0 {
+	if code := r.a.run(context.Background(), []string{"time", "--yes"}); code != 0 {
 		t.Fatalf("exit %d: %s", code, r.err)
 	}
 	if r.n.feats != 4 || r.n.firstFeat[0] != 0x04 || r.n.firstFeat[1] != 0x18 || !strings.Contains(r.out.String(), "clock set") {
@@ -178,7 +176,7 @@ func TestTimeYesSendsTheFourClockFrames(t *testing.T) {
 func TestProbeYesWritesOneFramePerInterfaceAndLogs(t *testing.T) {
 	r := newRig(t, sonixUnit(t, "1-1", 0x800A))
 	logf := filepath.Join(t.TempDir(), "probe.md")
-	if code := r.a.run([]string{"probe", "--yes", "--log", logf}); code != 0 {
+	if code := r.a.run(context.Background(), []string{"probe", "--yes", "--log", logf}); code != 0 {
 		t.Fatalf("exit %d: %s", code, r.err)
 	}
 	if r.n.writes != 2 {
@@ -192,34 +190,34 @@ func TestProbeYesWritesOneFramePerInterfaceAndLogs(t *testing.T) {
 func TestFriendlyErrorsSayWhatToDoNext(t *testing.T) {
 	t.Run("no keyboard", func(t *testing.T) {
 		r := newRig(t, nil)
-		if r.a.run([]string{"list"}) != 1 || !strings.Contains(r.err.String(), "Plug it in") || !strings.Contains(r.err.String(), "ak820 setup") {
+		if r.a.run(context.Background(), []string{"list"}) != 1 || !strings.Contains(r.err.String(), "Plug it in") || !strings.Contains(r.err.String(), "ak820 setup") {
 			t.Errorf("%q", r.err)
 		}
 	})
 	t.Run("permission", func(t *testing.T) {
 		r := newRig(t, sonixUnit(t, "1-1", 0x800A))
-		r.a.c.OpenDev = func(i hidraw.Info) (core.DevIO, error) {
+		r.open = func(i hidraw.Info) (keyboard.Device, error) {
 			return nil, fmt.Errorf("%w on %s", hidraw.ErrPermission, i.Node)
 		}
-		if r.a.run([]string{"time", "--yes"}) != 1 || !strings.Contains(r.err.String(), "ak820 setup") || strings.Contains(r.err.String(), "hidraw") {
+		if r.a.run(context.Background(), []string{"time", "--yes"}) != 1 || !strings.Contains(r.err.String(), "ak820 setup") || strings.Contains(r.err.String(), "hidraw") {
 			t.Errorf("%q", r.err)
 		}
 	})
 	t.Run("unknown layout", func(t *testing.T) {
 		unknown := []hidraw.Info{{Node: "/dev/x", VID: 0x0c45, PID: 0x800a, Raw: vdesc(0xFF00, 8, 8, 0), Descriptor: hidraw.ParseDescriptor(vdesc(0xFF00, 8, 8, 0))}}
 		r := newRig(t, unknown)
-		if r.a.run([]string{"time", "--yes"}) != 1 || !strings.Contains(r.err.String(), "ak820 report --issue") || r.n.opens != 0 {
+		if r.a.run(context.Background(), []string{"time", "--yes"}) != 1 || !strings.Contains(r.err.String(), "ak820 report --issue") || r.n.opens != 0 {
 			t.Errorf("%q opens %d", r.err, r.n.opens)
 		}
 	})
 	t.Run("info on sonix", func(t *testing.T) {
 		r := newRig(t, sonixUnit(t, "1-1", 0x800A))
-		if r.a.run([]string{"info", "--yes"}) != 1 || !strings.Contains(r.err.String(), "ak820 time --yes") || r.n.opens != 0 {
+		if r.a.run(context.Background(), []string{"info", "--yes"}) != 1 || !strings.Contains(r.err.String(), "ak820 time --yes") || r.n.opens != 0 {
 			t.Errorf("%q", r.err)
 		}
 	})
 	t.Run("no reply", func(t *testing.T) {
-		if m := friendlyErr(errors.New("cmd 0x10: no reply (4 tries)")); !strings.Contains(m, "switch on the back") {
+		if m := advice(fmt.Errorf("cmd 0x10: %w (4 tries)", keyboard.ErrNoReply), "ak820"); !strings.Contains(m, "switch on the back") {
 			t.Error(m)
 		}
 	})
@@ -228,34 +226,34 @@ func TestFriendlyErrorsSayWhatToDoNext(t *testing.T) {
 func TestSeveralKeyboardsNeedAChoice(t *testing.T) {
 	two := append(sonixUnit(t, "1-1", 0x800A), sonixUnit(t, "1-2", 0x800A)...)
 	r := newRig(t, two)
-	if r.a.run([]string{"list"}) != 1 || !strings.Contains(r.err.String(), "--device") {
+	if r.a.run(context.Background(), []string{"list"}) != 1 || !strings.Contains(r.err.String(), "--device") {
 		t.Fatalf("%q", r.err)
 	}
 	r = newRig(t, two)
-	if code := r.a.run([]string{"--device", "2", "list"}); code != 0 || strings.Count(r.out.String(), "\n") != 2 || !strings.Contains(r.out.String(), two[2].Node) {
+	if code := r.a.run(context.Background(), []string{"--device", "2", "list"}); code != 0 || strings.Count(r.out.String(), "\n") != 2 || !strings.Contains(r.out.String(), two[2].Node) {
 		t.Fatalf("exit %d out %q", code, r.out)
 	}
 	t.Setenv("AK820_DEVICE", "1")
 	r = newRig(t, two)
-	if code := r.a.run([]string{"list"}); code != 0 || !strings.Contains(r.out.String(), two[0].Node) {
+	if code := r.a.run(context.Background(), []string{"list"}); code != 0 || !strings.Contains(r.out.String(), two[0].Node) {
 		t.Fatalf("env: exit %d %q", code, r.out)
 	}
 }
 
 func TestBadDeviceFlag(t *testing.T) {
 	r := newRig(t, sonixUnit(t, "1-1", 0x800A))
-	if r.a.run([]string{"--device", "two", "list"}) != 2 {
+	if r.a.run(context.Background(), []string{"--device", "two", "list"}) != 2 {
 		t.Error("want exit 2")
 	}
 }
 
 func TestNoArgumentsStartsTheUI(t *testing.T) {
 	r := newRig(t, nil)
-	if code := r.a.run(nil); code != 0 || !r.uiCalled || r.uiAddr != "127.0.0.1:0" || r.uiNoOpen {
+	if code := r.a.run(context.Background(), nil); code != 0 || !r.uiCalled || r.uiAddr != "127.0.0.1:0" || r.uiNoOpen {
 		t.Fatalf("exit %d called %v addr %q noOpen %v", code, r.uiCalled, r.uiAddr, r.uiNoOpen)
 	}
 	r = newRig(t, nil)
-	r.a.run([]string{"ui", "--no-open", "--addr", "127.0.0.1:9"})
+	r.a.run(context.Background(), []string{"ui", "--no-open", "--addr", "127.0.0.1:9"})
 	if !r.uiNoOpen || r.uiAddr != "127.0.0.1:9" {
 		t.Errorf("flags not passed: %q %v", r.uiAddr, r.uiNoOpen)
 	}
@@ -263,22 +261,22 @@ func TestNoArgumentsStartsTheUI(t *testing.T) {
 
 func TestHelpVersionAndUnknownCommand(t *testing.T) {
 	r := newRig(t, nil)
-	if r.a.run([]string{"help"}) != 0 || !strings.Contains(r.out.String(), "ak820 setup") {
+	if r.a.run(context.Background(), []string{"help"}) != 0 || !strings.Contains(r.out.String(), "ak820 setup") {
 		t.Error("help")
 	}
 	r = newRig(t, nil)
-	if r.a.run([]string{"version"}) != 0 || !strings.HasPrefix(r.out.String(), "ak820 ") {
+	if r.a.run(context.Background(), []string{"version"}) != 0 || !strings.HasPrefix(r.out.String(), "ak820 ") {
 		t.Errorf("version %q", r.out)
 	}
 	r = newRig(t, nil)
-	if r.a.run([]string{"frobnicate"}) != 2 || !strings.Contains(r.err.String(), "unknown command") {
+	if r.a.run(context.Background(), []string{"frobnicate"}) != 2 || !strings.Contains(r.err.String(), "unknown command") {
 		t.Errorf("unknown: %q", r.err)
 	}
 }
 
 func TestReportIssueIsPasteReady(t *testing.T) {
 	r := newRig(t, sonixUnit(t, "1-1", 0x800A))
-	if code := r.a.run([]string{"report", "--issue"}); code != 0 {
+	if code := r.a.run(context.Background(), []string{"report", "--issue"}); code != 0 {
 		t.Fatal(r.err)
 	}
 	for _, want := range []string{"**ak820**", "Layout detected:** sonix", "| node |", "Descriptors:", "06 68 ff"} {
@@ -292,7 +290,7 @@ func TestSetupChecklist(t *testing.T) {
 	ruleDir := t.TempDir()
 	r := newRig(t, sonixUnit(t, "1-1", 0x800A))
 	r.a.ruleDirs = []string{ruleDir}
-	if code := r.a.run([]string{"setup"}); code != 1 || !strings.Contains(r.out.String(), "✗ Permission rule installed") || !strings.Contains(r.out.String(), setup.InstallCommand("ak820")) {
+	if code := r.a.run(context.Background(), []string{"setup"}); code != 1 || !strings.Contains(r.out.String(), "✗ Permission rule installed") || !strings.Contains(r.out.String(), setup.InstallCommand("ak820")) {
 		t.Fatalf("no rule: exit %d\n%s", code, r.out)
 	}
 	if strings.Contains(r.err.String(), "error") {
@@ -301,30 +299,30 @@ func TestSetupChecklist(t *testing.T) {
 	os.WriteFile(filepath.Join(ruleDir, "99-mine.rules"), []byte(`ATTRS{idVendor}=="0c45", ATTRS{idProduct}=="800a", TAG+="uaccess"`), 0o644)
 	r = newRig(t, sonixUnit(t, "1-1", 0x800A))
 	r.a.ruleDirs = []string{ruleDir}
-	if code := r.a.run([]string{"setup"}); code != 0 || !strings.Contains(r.out.String(), "All good") || strings.Contains(r.out.String(), "✗") {
+	if code := r.a.run(context.Background(), []string{"setup"}); code != 0 || !strings.Contains(r.out.String(), "All good") || strings.Contains(r.out.String(), "✗") {
 		t.Fatalf("with rule: exit %d\n%s", code, r.out)
 	}
 	r = newRig(t, nil)
 	r.a.ruleDirs = []string{ruleDir}
-	if code := r.a.run([]string{"setup"}); code != 1 || !strings.Contains(r.out.String(), "✗ Keyboard found") || !strings.Contains(r.out.String(), "USB-C") {
+	if code := r.a.run(context.Background(), []string{"setup"}); code != 1 || !strings.Contains(r.out.String(), "✗ Keyboard found") || !strings.Contains(r.out.String(), "USB-C") {
 		t.Fatalf("no keyboard: exit %d\n%s", code, r.out)
 	}
 }
 
 func TestSetupPrintRuleMatchesTheShippedFile(t *testing.T) {
 	r := newRig(t, nil)
-	if r.a.run([]string{"setup", "--print-rule"}) != 0 || r.out.String() != setup.Rule || !strings.Contains(r.out.String(), "800a") {
+	if r.a.run(context.Background(), []string{"setup", "--print-rule"}) != 0 || r.out.String() != setup.Rule || !strings.Contains(r.out.String(), "800a") {
 		t.Error("print-rule output differs from the embedded rule")
 	}
 }
 
 func TestOlderProductAndDongleHandling(t *testing.T) {
 	r := newRig(t, sonixUnit(t, "1-1", 0x8009))
-	if r.a.run([]string{"list"}) != 0 {
+	if r.a.run(context.Background(), []string{"list"}) != 0 {
 		t.Errorf("0x8009 must be supported: %s", r.err)
 	}
 	r = newRig(t, sonixUnit(t, "1-4", 0xFEFE))
-	if r.a.run([]string{"list"}) != 1 || !strings.Contains(r.err.String(), "No AK820 keyboard found") {
+	if r.a.run(context.Background(), []string{"list"}) != 1 || !strings.Contains(r.err.String(), "No AK820 keyboard found") {
 		t.Errorf("a lone 2.4G dongle is not a keyboard we can drive: %q", r.err)
 	}
 }
@@ -333,20 +331,20 @@ func TestHintsNameTheProgramTheUserActuallyRan(t *testing.T) {
 	// "ak820: command not found": a binary run as ./ak820 must not tell people to type plain ak820.
 	r := newRig(t, sonixUnit(t, "1-1", 0x800A))
 	r.a.prog = "./ak820"
-	r.a.run([]string{"info", "--yes"})
+	r.a.run(context.Background(), []string{"info", "--yes"})
 	if !strings.Contains(r.err.String(), "`./ak820 time --yes`") || strings.Contains(r.err.String(), "`ak820 ") {
 		t.Errorf("%q", r.err)
 	}
 	r = newRig(t, nil)
 	r.a.prog = "./ak820"
-	r.a.run([]string{"list"})
+	r.a.run(context.Background(), []string{"list"})
 	if !strings.Contains(r.err.String(), "`./ak820 setup`") {
 		t.Errorf("%q", r.err)
 	}
 	r = newRig(t, sonixUnit(t, "1-1", 0x800A))
 	r.a.prog = "./ak820"
 	r.a.ruleDirs = []string{t.TempDir()}
-	r.a.run([]string{"setup"})
+	r.a.run(context.Background(), []string{"setup"})
 	if !strings.Contains(r.out.String(), "./ak820 setup --print-rule") {
 		t.Errorf("%s", r.out)
 	}
@@ -355,7 +353,7 @@ func TestHintsNameTheProgramTheUserActuallyRan(t *testing.T) {
 func TestHelpFlagOnEveryCommandIsNotAnError(t *testing.T) {
 	for _, cmd := range []string{"setup", "report", "probe", "info", "upload", "builtin", "time", "ui"} {
 		r := newRig(t, sonixUnit(t, "1-1", 0x800A))
-		code := r.a.run([]string{cmd, "-h"})
+		code := r.a.run(context.Background(), []string{cmd, "-h"})
 		if code != 0 || strings.Contains(r.err.String(), "error") || r.uiCalled {
 			t.Errorf("%s -h: exit %d, stderr %q, ui started %v", cmd, code, r.err, r.uiCalled)
 		}
@@ -371,8 +369,8 @@ func TestUploadWarnsWhenHistoryCannotBeSaved(t *testing.T) {
 	r := newRig(t, sonixUnit(t, "1-1", 0x800A))
 	blocker := filepath.Join(t.TempDir(), "a-file")
 	os.WriteFile(blocker, nil, 0o644)
-	r.a.c.DataDir = blocker // history dir cannot be created under a regular file
-	if code := r.a.run([]string{"upload", "--yes", testPNG(t)}); code != 0 {
+	r.a.historyDir = filepath.Join(blocker, "history") // history dir cannot be created under a regular file
+	if code := r.a.run(context.Background(), []string{"upload", "--yes", testPNG(t)}); code != 0 {
 		t.Fatalf("exit %d: %s", code, r.err)
 	}
 	if !strings.Contains(r.out.String(), "done") || !strings.Contains(r.err.String(), "warning") {
@@ -382,7 +380,19 @@ func TestUploadWarnsWhenHistoryCannotBeSaved(t *testing.T) {
 
 func TestUnpluggedKeyboardGetsAPlainMessage(t *testing.T) {
 	err := fmt.Errorf("read: %w", syscall.ENODEV)
-	if m := friendlyErr(err); !strings.Contains(m, "disappeared") {
+	if m := advice(err, "ak820"); !strings.Contains(m, "disappeared") {
 		t.Errorf("%q", m)
+	}
+}
+
+func TestCancelledUploadExplainsItself(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r := newRig(t, sonixUnit(t, "1-1", 0x800A))
+	if code := r.a.run(ctx, []string{"upload", "--yes", testPNG(t)}); code != 1 || !strings.Contains(r.err.String(), "Stopped") {
+		t.Errorf("exit %d: %q", code, r.err)
+	}
+	if entries, _ := os.ReadDir(r.a.historyDir); len(entries) != 0 {
+		t.Error("a cancelled upload must not be added to history")
 	}
 }

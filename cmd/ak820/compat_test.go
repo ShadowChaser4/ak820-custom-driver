@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"os"
 	"path/filepath"
@@ -63,7 +64,7 @@ func TestCLIOutputIsStable(t *testing.T) {
 		{"help", nil, []string{"help"}, 0},
 	} {
 		r := newRig(t, c.ifs)
-		if code := r.a.run(c.args); code != c.code {
+		if code := r.a.run(context.Background(), c.args); code != c.code {
 			t.Errorf("%s: exit %d, want %d: %s %s", c.name, code, c.code, r.out, r.err)
 		}
 		compareText(t, c.name, "stdout:\n"+r.out.String()+"stderr:\n"+strings.ReplaceAll(r.err.String(), "\r", ""))

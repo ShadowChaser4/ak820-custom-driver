@@ -3,6 +3,7 @@
 package hidraw
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -26,8 +27,8 @@ func (*Device) Close() error { return nil }
 // Write always fails outside Linux.
 func (*Device) Write([]byte) error { return errNotLinux }
 
-// ReadTimeout always fails outside Linux.
-func (*Device) ReadTimeout(time.Duration) ([]byte, error) { return nil, errNotLinux }
+// Read always fails outside Linux.
+func (*Device) Read(context.Context, time.Duration) ([]byte, error) { return nil, errNotLinux }
 
 // GetFeature always fails outside Linux.
 func (*Device) GetFeature(byte, int) ([]byte, error) { return nil, errNotLinux }

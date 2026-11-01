@@ -2,55 +2,59 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"image"
 	"image/png"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/ShadowChaser4/ak820-custom-driver/internal/core"
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/keyboard"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/keyboard/drivers"
 )
 
 const host = "127.0.0.1:9999"
 
 type dev struct{ w, o *int }
 
-func (d dev) Write([]byte) error                        { *d.w++; return nil }
-func (d dev) ReadTimeout(time.Duration) ([]byte, error) { return nil, nil }
-func (d dev) GetFeature(byte, int) ([]byte, error)      { return nil, nil }
-func (d dev) SetFeature([]byte, int) error              { *d.w++; return nil }
-func (d dev) Close() error                              { return nil }
+func (d dev) Write([]byte) error { *d.w++; return nil }
+func (d dev) Read(context.Context, time.Duration) ([]byte, error) {
+	return nil, os.ErrDeadlineExceeded
+}
+func (d dev) GetFeature(byte, int) ([]byte, error) { return make([]byte, 65), nil }
+func (d dev) SetFeature([]byte, int) error         { *d.w++; return nil }
+func (d dev) Close() error                         { return nil }
 
-func rig(t *testing.T, confirmed bool) (*httptest.Server, *Server, *int, *int) {
+// the two vendor interfaces of a real 0c45:800a unit (captured descriptors)
+var (
+	ff68 = []byte{0x06, 0x68, 0xff, 0x09, 0x61, 0xa1, 0x01, 0x09, 0x62, 0x15, 0x00, 0x26, 0xff, 0x00, 0x95, 0x40,
+		0x75, 0x08, 0x81, 0x02, 0x09, 0x63, 0x15, 0x00, 0x26, 0xff, 0x00, 0x96, 0x00, 0x10, 0x75, 0x08, 0x91, 0x02, 0xc0}
+	ff13 = []byte{0x06, 0x13, 0xff, 0x09, 0x01, 0xa1, 0x01, 0x15, 0x00, 0x26, 0xff, 0x00, 0x75, 0x08, 0x95, 0x40,
+		0x09, 0x02, 0x81, 0x02, 0x09, 0x03, 0x91, 0x02, 0x0a, 0x00, 0xff, 0xb1, 0x02, 0xc0}
+)
+
+func rig(t *testing.T, connected bool) (*httptest.Server, *Server, *int, *int) {
 	t.Helper()
 	var writes, opens int
-	c := &core.Core{
-		Enumerate: func() ([]hidraw.Info, error) {
-			// the two vendor interfaces of a real 0c45:800a unit (captured descriptors)
-			ff68 := []byte{0x06, 0x68, 0xff, 0x09, 0x61, 0xa1, 0x01, 0x09, 0x62, 0x15, 0x00, 0x26, 0xff, 0x00, 0x95, 0x40,
-				0x75, 0x08, 0x81, 0x02, 0x09, 0x63, 0x15, 0x00, 0x26, 0xff, 0x00, 0x96, 0x00, 0x10, 0x75, 0x08, 0x91, 0x02, 0xc0}
-			ff13 := []byte{0x06, 0x13, 0xff, 0x09, 0x01, 0xa1, 0x01, 0x15, 0x00, 0x26, 0xff, 0x00, 0x75, 0x08, 0x95, 0x40,
-				0x09, 0x02, 0x81, 0x02, 0x09, 0x03, 0x91, 0x02, 0x0a, 0x00, 0xff, 0xb1, 0x02, 0xc0}
-			mk := func(node string, iface int, raw []byte) hidraw.Info {
-				return hidraw.Info{Node: node, VID: 0x0c45, PID: 0x800a, Iface: iface, Raw: raw, Descriptor: hidraw.ParseDescriptor(raw)}
-			}
+	mk := func(node string, iface int, raw []byte) hidraw.Info {
+		return hidraw.Info{Node: node, VID: 0x0c45, PID: 0x800a, Iface: iface, Raw: raw, Descriptor: hidraw.ParseDescriptor(raw)}
+	}
+	finder := drivers.NewFinder(
+		func() ([]hidraw.Info, error) {
 			return []hidraw.Info{mk("/dev/hidraw7", 2, ff68), mk("/dev/hidraw8", 3, ff13)}, nil
 		},
-		OpenDev: func(hidraw.Info) (core.DevIO, error) {
-			opens++
-			return dev{&writes, &opens}, nil
-		},
-		DataDir: t.TempDir(),
+		func(hidraw.Info) (keyboard.Device, error) { opens++; return dev{&writes, &opens}, nil },
+	)
+	s := &Server{Finder: finder, HistoryDir: t.TempDir(), Token: "tok", AllowedHosts: []string{host}}
+	if connected {
+		s.markConnected("/dev/hidraw8")
 	}
-	if confirmed {
-		c.MarkConnected("/dev/hidraw8")
-	}
-	s := &Server{Core: c, Token: "tok", AllowedHosts: []string{host}}
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	return ts, s, &writes, &opens

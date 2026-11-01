@@ -1,6 +1,7 @@
 package hidraw
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -41,14 +42,22 @@ func (d *Device) Write(pkt []byte) error {
 	return err
 }
 
-// ReadTimeout returns one input report, or (nil, nil) on timeout.
-func (d *Device) ReadTimeout(t time.Duration) ([]byte, error) {
-	_ = d.f.SetReadDeadline(time.Now().Add(t))
+// Read returns one input report. It waits at most timeout, returning
+// os.ErrDeadlineExceeded if nothing arrives, and stops early if ctx is cancelled.
+func (d *Device) Read(ctx context.Context, timeout time.Duration) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := d.f.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		return nil, err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = d.f.SetReadDeadline(time.Now()) })
+	defer stop()
 	buf := make([]byte, 8192)
 	n, err := d.f.Read(buf)
 	if err != nil {
-		if errors.Is(err, os.ErrDeadlineExceeded) {
-			return nil, nil
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, cerr
 		}
 		return nil, err
 	}

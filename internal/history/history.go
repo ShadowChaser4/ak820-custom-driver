@@ -1,5 +1,6 @@
-// Package history keeps previously uploaded payloads on disk, in the same
-// format as the Python tool (YYYYMMDD-HHMMSS_name.bin).
+// Package history keeps previously uploaded animations on disk, in the same format
+// as the Python tool (YYYYMMDD-HHMMSS_name.bin). That format caps frame delays at
+// 510 ms, which only affects animations restored from history.
 package history
 
 import (
@@ -9,10 +10,28 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/animation"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/keyboard/legacy"
 )
 
+// Max is how many entries are kept.
 const Max = 50
 
+// DefaultDir is where history lives for this user.
+func DefaultDir() string {
+	base := os.Getenv("XDG_DATA_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return filepath.Join(os.TempDir(), "ak820", "history")
+		}
+		base = filepath.Join(home, ".local", "share")
+	}
+	return filepath.Join(base, "ak820", "history")
+}
+
+// Entry is one saved animation.
 type Entry struct {
 	ID     string    `json:"id"` // file name; only ever matched against a directory listing
 	Name   string    `json:"name"`
@@ -36,18 +55,23 @@ func safe(name string) string {
 	return s
 }
 
-// Save stores payload and prunes to the newest Max entries.
-func Save(dir string, payload []byte, name string) error {
+// Save stores frames and prunes to the newest Max entries.
+func Save(dir string, frames []animation.Frame, name string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	f := fmt.Sprintf("%s_%s.bin", time.Now().Format("20060102-150405"), safe(name))
-	if err := os.WriteFile(filepath.Join(dir, f), payload, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, f), legacy.Encode(frames), 0o644); err != nil {
 		return err
 	}
-	es, _ := List(dir)
+	es, err := List(dir)
+	if err != nil {
+		return err
+	}
 	for i := Max; i < len(es); i++ {
-		os.Remove(filepath.Join(dir, es[i].ID))
+		if err := os.Remove(filepath.Join(dir, es[i].ID)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -87,14 +111,18 @@ func List(dir string) ([]Entry, error) {
 
 // Load reads an entry. id is matched against the directory listing, so a
 // client-supplied value can never name a path outside dir.
-func Load(dir, id string) ([]byte, error) {
+func Load(dir, id string) ([]animation.Frame, error) {
 	es, err := List(dir)
 	if err != nil {
 		return nil, err
 	}
 	for _, e := range es {
 		if e.ID == id {
-			return os.ReadFile(filepath.Join(dir, e.ID))
+			b, err := os.ReadFile(filepath.Join(dir, e.ID))
+			if err != nil {
+				return nil, err
+			}
+			return legacy.Decode(b)
 		}
 	}
 	return nil, fmt.Errorf("no history entry %q", id)

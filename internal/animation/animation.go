@@ -150,7 +150,7 @@ func Decode(data []byte, fit Fit, bg color.Color) ([]Frame, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unsupported image (PNG, JPEG and GIF work): %w", err)
 	}
-	return []Frame{{Scale(im, fit, bg), 100}}, nil
+	return []Frame{{Scale(im, fit, bg), StillDelayMs}}, nil
 }
 
 // ParseColor accepts black, white or RRGGBB / #RRGGBB (black on anything else).
@@ -166,40 +166,6 @@ func ParseColor(s string) color.Color {
 		return color.RGBA{r, g, b, 255}
 	}
 	return color.Black
-}
-
-// ParsePayload is the inverse of BuildPayload (RGB565 is lossy, so pixels are
-// expanded back to 8 bits).
-func ParsePayload(p []byte) ([]Frame, error) {
-	if len(p) < 257 || p[0] == 0 {
-		return nil, fmt.Errorf("payload too short")
-	}
-	n := int(p[0])
-	if len(p) < 256+n*Width*Height*2 {
-		return nil, fmt.Errorf("payload truncated: %d frames need %d bytes, have %d", n, 256+n*Width*Height*2, len(p))
-	}
-	out := make([]Frame, 0, n)
-	for k := 0; k < n; k++ {
-		raw := p[256+k*Width*Height*2 : 256+(k+1)*Width*Height*2]
-		im := image.NewRGBA(image.Rect(0, 0, Width, Height))
-		for j := 0; j < Width*Height; j++ {
-			v := int(raw[2*j]) | int(raw[2*j+1])<<8
-			im.Pix[4*j] = uint8((v >> 11) * 255 / 31)
-			im.Pix[4*j+1] = uint8((v >> 5 & 63) * 255 / 63)
-			im.Pix[4*j+2] = uint8((v & 31) * 255 / 31)
-			im.Pix[4*j+3] = 255
-		}
-		d := 500
-		if n > 1 {
-			if k < n-1 {
-				d = int(p[k+1]) * 2
-			} else {
-				d = int(p[n-1]) * 2
-			}
-		}
-		out = append(out, Frame{im, d})
-	}
-	return out, nil
 }
 
 // Scaled returns a nearest-neighbour copy at factor f.
@@ -323,22 +289,25 @@ func RGB565LE(im *image.RGBA) []byte {
 	return out
 }
 
-// BuildPayload: 256-byte 0xFF header (count, per-frame delay in 2 ms units,
-// terminating 0) followed by the frames.
-func BuildPayload(frames []Frame) []byte {
-	n := len(frames)
-	hdr := make([]byte, 256)
-	for i := range hdr {
-		hdr[i] = 0xFF
+// StillDelayMs is the delay given to a single picture. Nothing changes on screen, but the
+// keyboard still reads a delay for it.
+const StillDelayMs = 500
+
+// FrameBytes is the size of one frame in RGB565.
+const FrameBytes = Width * Height * 2
+
+// FromRGB565LE expands one frame of little-endian RGB565 back to 8 bits per channel.
+func FromRGB565LE(raw []byte) *image.RGBA {
+	im := image.NewRGBA(image.Rect(0, 0, Width, Height))
+	for j := 0; j < Width*Height; j++ {
+		v := int(raw[2*j]) | int(raw[2*j+1])<<8
+		im.Pix[4*j] = uint8((v >> 11) * 255 / 31)
+		im.Pix[4*j+1] = uint8((v >> 5 & 63) * 255 / 63)
+		im.Pix[4*j+2] = uint8((v & 31) * 255 / 31)
+		im.Pix[4*j+3] = 255
 	}
-	hdr[0] = byte(n)
-	for k := 0; k < n-1; k++ {
-		hdr[k+1] = byte(min(255, max(1, int(math.Round(float64(frames[k].DelayMs)/2)))))
-	}
-	hdr[n] = 0
-	out := hdr
-	for _, f := range frames {
-		out = append(out, RGB565LE(f.Img)...)
-	}
-	return out
+	return im
 }
+
+// Quantize returns the frame as the screen will show it, after the colour loss of RGB565.
+func Quantize(im *image.RGBA) *image.RGBA { return FromRGB565LE(RGB565LE(im)) }

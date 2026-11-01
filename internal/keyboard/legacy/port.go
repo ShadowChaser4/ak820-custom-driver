@@ -1,46 +1,48 @@
-// Package proto implements the AK820 Pro host<->device packet framing
-// (see PROTOCOL.md in fromagge/ak820-screen).
-package proto
+// Package legacy speaks the older AK820 protocol: AA/55 framed commands on a config
+// interface and an animation stream on a bulk interface (usage page 0xFF67).
+//
+// Source: PROTOCOL.md in github.com/fromagge/ak820-screen.
+package legacy
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os"
 	"time"
+
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/keyboard"
 )
 
+// Command bytes.
 const (
 	CmdInfo    = 0x10
-	CmdTemp    = 0x34
+	CmdClock   = 0x34
 	CmdAnim    = 0x50
 	CmdBuiltin = 0x51
-	AckAnim    = 0x41
+	ackAnim    = 0x41
 )
 
-// Conn is the slice of hidraw.Dev the protocol needs (fakeable in tests).
+// Conn is the part of a device the protocol needs.
 type Conn interface {
-	Write(pkt []byte) error
-	ReadTimeout(t time.Duration) ([]byte, error)
+	Write(report []byte) error
+	Read(ctx context.Context, timeout time.Duration) ([]byte, error)
 }
 
-// Chunks builds the standard chunked command packets (vendor kX/AX):
+// Chunks builds the standard chunked command packets:
 //
 //	AA cmd len addr_lo addr_hi 00 last 00 <payload...>
 //
-// Each packet is exactly reportLen bytes; payload is reportLen-8 bytes per chunk.
+// Each packet is exactly reportLen bytes.
 func Chunks(reportLen int, cmd byte, data []byte, contentSize int) [][]byte {
-	if contentSize < len(data) {
-		contentSize = len(data)
-	}
+	contentSize = max(contentSize, len(data))
 	per := reportLen - 8
-	n := (contentSize + per - 1) / per
-	if n < 1 {
-		n = 1
-	}
+	n := max(1, (contentSize+per-1)/per)
 	var out [][]byte
-	for i := 0; i < n; i++ {
+	for i := range n {
 		addr := i * per
-		ln := min(per, contentSize-addr)
 		pkt := make([]byte, reportLen)
-		copy(pkt, []byte{0xAA, cmd, byte(ln), byte(addr), byte(addr >> 8), 0, 0, 0})
+		copy(pkt, []byte{0xAA, cmd, byte(min(per, contentSize-addr)), byte(addr), byte(addr >> 8), 0, 0, 0})
 		if i == n-1 {
 			pkt[6] = 1
 		}
@@ -52,14 +54,14 @@ func Chunks(reportLen int, cmd byte, data []byte, contentSize int) [][]byte {
 	return out
 }
 
-// AnimChunks builds the 0x50 upload stream, which uses a custom header:
+// AnimChunks builds the 0x50 upload stream, which has its own header:
 //
 //	AA 50 idx_lo idx_hi total_lo total_hi 50 06 <chunk>
 func AnimChunks(reportLen int, payload []byte) [][]byte {
 	per := reportLen - 8
 	total := (len(payload) + per - 1) / per
 	var out [][]byte
-	for i := 0; i < total; i++ {
+	for i := range total {
 		pkt := make([]byte, reportLen)
 		copy(pkt, []byte{0xAA, CmdAnim, byte(i), byte(i >> 8), byte(total), byte(total >> 8), 0x50, 0x06})
 		copy(pkt[8:], payload[i*per:min((i+1)*per, len(payload))])
@@ -68,66 +70,68 @@ func AnimChunks(reportLen int, payload []byte) [][]byte {
 	return out
 }
 
-// Port sends packets over a Conn and waits for 55 <cmd> replies.
+// Port sends packets and waits for 55 <cmd> replies.
 type Port struct {
-	C       Conn
-	Len     int
+	Conn    Conn
 	Timeout time.Duration
 	Retries int
 }
 
-func (p *Port) drain() {
+func (p *Port) drain(ctx context.Context) error {
 	for {
-		r, err := p.C.ReadTimeout(time.Millisecond)
-		if err != nil || r == nil {
-			return
+		_, err := p.Conn.Read(ctx, time.Millisecond)
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return nil
+		}
+		if err != nil {
+			return err
 		}
 	}
 }
 
-func (p *Port) wait(cmd byte, t time.Duration) ([]byte, error) {
+// wait returns the reply to cmd, or os.ErrDeadlineExceeded.
+func (p *Port) wait(ctx context.Context, cmd byte, t time.Duration) ([]byte, error) {
 	end := time.Now().Add(t)
 	for {
 		left := time.Until(end)
 		if left <= 0 {
-			return nil, nil
+			return nil, os.ErrDeadlineExceeded
 		}
-		r, err := p.C.ReadTimeout(left)
+		r, err := p.Conn.Read(ctx, left)
 		if err != nil {
 			return nil, err
 		}
 		if len(r) > 1 && r[0] == 0x55 && r[1] == cmd {
 			return r, nil
 		}
-		if r == nil {
-			return nil, nil
-		}
 	}
 }
 
 // Transact writes pkt and waits for a reply to cmd, retrying on timeout.
-func (p *Port) Transact(pkt []byte, cmd byte, t time.Duration, retries int) ([]byte, error) {
-	for a := 0; a <= retries; a++ {
-		p.drain()
-		if err := p.C.Write(pkt); err != nil {
+func (p *Port) Transact(ctx context.Context, pkt []byte, cmd byte, t time.Duration, retries int) ([]byte, error) {
+	for range retries + 1 {
+		if err := p.drain(ctx); err != nil {
 			return nil, err
 		}
-		r, err := p.wait(cmd, t)
-		if err != nil {
+		if err := p.Conn.Write(pkt); err != nil {
 			return nil, err
 		}
-		if r != nil {
+		r, err := p.wait(ctx, cmd, t)
+		if err == nil {
 			return r, nil
 		}
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
+			return nil, err
+		}
 	}
-	return nil, fmt.Errorf("cmd 0x%02x: no reply (%d tries)", cmd, retries+1)
+	return nil, fmt.Errorf("cmd 0x%02x: %w (%d tries)", cmd, keyboard.ErrNoReply, retries+1)
 }
 
-// Command sends a chunked command and collects the reply to every chunk.
-func (p *Port) Command(cmd byte, data []byte, contentSize int) ([][]byte, error) {
+// Exchange sends packets and collects the reply to each.
+func (p *Port) Exchange(ctx context.Context, pkts [][]byte, cmd byte) ([][]byte, error) {
 	var replies [][]byte
-	for _, pkt := range Chunks(p.Len, cmd, data, contentSize) {
-		r, err := p.Transact(pkt, cmd, p.Timeout, p.Retries)
+	for _, pkt := range pkts {
+		r, err := p.Transact(ctx, pkt, cmd, p.Timeout, p.Retries)
 		if err != nil {
 			return replies, err
 		}
@@ -136,21 +140,10 @@ func (p *Port) Command(cmd byte, data []byte, contentSize int) ([][]byte, error)
 	return replies, nil
 }
 
-// Send writes a chunked command without waiting for replies.
-func (p *Port) Send(cmd byte, data []byte, contentSize int) error {
-	for _, pkt := range Chunks(p.Len, cmd, data, contentSize) {
-		if err := p.C.Write(pkt); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// Upload sends an animation payload, waiting for a 55 41 ack per chunk.
-func (p *Port) Upload(payload []byte, progress func(done, total int)) error {
-	pkts := AnimChunks(p.Len, payload)
+// Upload sends the animation stream, waiting for a 55 41 acknowledgement per packet.
+func (p *Port) Upload(ctx context.Context, pkts [][]byte, progress func(done, total int)) error {
 	for i, pkt := range pkts {
-		if _, err := p.Transact(pkt, AckAnim, 2*time.Second, p.Retries); err != nil {
+		if _, err := p.Transact(ctx, pkt, ackAnim, 2*time.Second, p.Retries); err != nil {
 			return fmt.Errorf("chunk %d/%d: %w", i+1, len(pkts), err)
 		}
 		if progress != nil {
@@ -173,6 +166,7 @@ type Info struct {
 	FrameVersion byte
 }
 
+// ParseInfo decodes the GET_DEVICE_INFO replies.
 func ParseInfo(replies [][]byte) (Info, error) {
 	var b []byte
 	for _, r := range replies {
@@ -183,7 +177,7 @@ func ParseInfo(replies [][]byte) (Info, error) {
 	if len(b) < 31 {
 		return Info{}, fmt.Errorf("info reply too short (%d bytes)", len(b))
 	}
-	fw := (int(b[8]&15) + int(b[8]>>4)*10 + int(b[9])*100)
+	fw := int(b[8]&15) + int(b[8]>>4)*10 + int(b[9])*100
 	return Info{
 		VID:          uint16(b[4]) | uint16(b[5])<<8,
 		PID:          uint16(b[6]) | uint16(b[7])<<8,
