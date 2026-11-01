@@ -101,7 +101,7 @@ func List(dir string) ([]Entry, error) {
 			if _, err := f.Read(b[:]); err == nil {
 				e.Frames = int(b[0])
 			}
-			f.Close()
+			_ = f.Close() // opened read-only, so closing cannot lose data
 		}
 		out = append(out, e)
 	}
