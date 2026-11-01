@@ -65,7 +65,8 @@ async function loadDevices() {
   const title = d.ready && f.level === "ok" && !/connected/i.test(f.title) ? "Connected" : f.title;
   $("conn").dataset.level = f.level; $("conn-title").textContent = title; $("conn-msg").textContent = f.message;
   if (d.version) $("ver").textContent = "ak820 " + d.version;
-  $("checklist").hidden = !!d.ready;
+  // The "check the cable / switch" list only makes sense when the keyboard was NOT found.
+  $("checklist").hidden = !!d.ready || f.level !== "bad";
   $("perm-tip").hidden = !/permission|access|denied/i.test((f.title + " " + f.message + " " + (d.error || "")));
   $("btn-connect").textContent = d.ready ? "Set the keyboard clock again" : "Connect & set the keyboard clock";
   $("btn-connect").classList.toggle("primary", !d.ready);
@@ -73,7 +74,13 @@ async function loadDevices() {
   renderIfaces(); updateLock();
 }
 
-$("btn-recheck").onclick = async () => { await loadDevices(); setMsg("connect-msg", dev.ready ? "Connected." : "Still not connected.", dev.ready ? "ok" : "bad"); };
+$("btn-recheck").onclick = async () => {
+  await loadDevices();
+  const found = !dev.ready && dev.friendly && dev.friendly.level === "warn";
+  setMsg("connect-msg",
+    dev.ready ? "Connected." : found ? "Your keyboard is found. Press the blue button to connect." : "Still not connected.",
+    dev.ready || found ? "ok" : "bad");
+};
 $("btn-connect").onclick = async () => {
   setMsg("connect-msg", "");
   try {
