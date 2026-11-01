@@ -29,6 +29,46 @@ type Info struct {
 // Enumerate lists hidraw nodes whose vendor id matches vid (0 = all).
 func Enumerate(vid uint16) ([]Info, error) { return EnumerateAt("/sys", vid) }
 
+// Unconfigured reports whether a USB device with this vendor id and a wanted product
+// id is plugged in but has no active configuration, so it has no hidraw nodes. The
+// kernel leaves a device like this when it cannot set it up, for example when a USB
+// hub has run out of bandwidth (error -28).
+func Unconfigured(vid uint16, want func(pid uint16) bool) bool {
+	return UnconfiguredAt("/sys", vid, want)
+}
+
+// UnconfiguredAt is Unconfigured with an injectable sysfs root (for tests).
+func UnconfiguredAt(sysRoot string, vid uint16, want func(pid uint16) bool) bool {
+	devs, err := filepath.Glob(filepath.Join(sysRoot, "bus/usb/devices/*"))
+	if err != nil {
+		return false
+	}
+	for _, d := range devs {
+		v, err := readHex16(filepath.Join(d, "idVendor"))
+		if err != nil || v != vid {
+			continue
+		}
+		p, err := readHex16(filepath.Join(d, "idProduct"))
+		if err != nil || !want(p) {
+			continue
+		}
+		cfg, err := os.ReadFile(filepath.Join(d, "bConfigurationValue"))
+		if err == nil && strings.TrimSpace(string(cfg)) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func readHex16(path string) (uint16, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	v, err := strconv.ParseUint(strings.TrimSpace(string(b)), 16, 16)
+	return uint16(v), err
+}
+
 // EnumerateAt is Enumerate with an injectable sysfs root (for tests).
 func EnumerateAt(sysRoot string, vid uint16) ([]Info, error) {
 	nodes, err := filepath.Glob(filepath.Join(sysRoot, "class/hidraw/hidraw*"))

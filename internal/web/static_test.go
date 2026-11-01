@@ -141,3 +141,14 @@ func TestFaviconIsLinkedAndServed(t *testing.T) {
 		t.Errorf("status %d, content type %q", resp.StatusCode, ct)
 	}
 }
+
+// People must be told how to get their picture back, or they think it is lost.
+func TestPageExplainsFnDel(t *testing.T) {
+	js := staticFile(t, "app.js")
+	if strings.Contains(js, "stays after unplugging.\"") {
+		t.Error("the confirm dialog must not stop at \"stays after unplugging\"")
+	}
+	if n := strings.Count(js, "Fn+Del"); n < 3 {
+		t.Errorf("Fn+Del appears %d times; expected the dialog, the done message and the connect message", n)
+	}
+}

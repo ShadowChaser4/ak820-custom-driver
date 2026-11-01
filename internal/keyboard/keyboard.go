@@ -28,7 +28,9 @@ var SupportedProducts = map[uint16]bool{0x800A: true, 0x8009: true}
 
 // Errors callers can test for with errors.Is.
 var (
-	ErrNoDevice      = errors.New("no keyboard found")
+	ErrNoDevice = errors.New("no keyboard found")
+	// ErrNotConfigured means the keyboard is plugged in, but the computer could not set it up.
+	ErrNotConfigured = errors.New("the keyboard is plugged in but could not finish connecting")
 	ErrUnknownLayout = errors.New("this keyboard talks in a way this tool does not know yet")
 	ErrUnsupported   = errors.New("this keyboard does not support that")
 	ErrNoReply       = errors.New("no reply")
@@ -147,6 +149,8 @@ type Finder struct {
 	cfg    Config
 	lock   *sync.Mutex
 	device int // 1-based choice among several keyboards; 0 requires exactly one
+	// unconfigured reports a keyboard that is plugged in but could not be set up.
+	unconfigured func() bool
 }
 
 // NewFinder returns a Finder.
@@ -156,6 +160,14 @@ func NewFinder(cfg Config) *Finder { return &Finder{cfg: cfg, lock: &sync.Mutex{
 func (f *Finder) WithDevice(n int) *Finder {
 	c := *f
 	c.device = n
+	return &c
+}
+
+// WithUnconfigured returns a Finder that uses check to tell a keyboard that could not
+// be set up from one that is not plugged in.
+func (f *Finder) WithUnconfigured(check func() bool) *Finder {
+	c := *f
+	c.unconfigured = check
 	return &c
 }
 
@@ -178,6 +190,9 @@ func (f *Finder) Interfaces() ([]hidraw.Info, error) {
 	groups := hidraw.Groups(ours)
 	switch {
 	case len(groups) == 0:
+		if f.unconfigured != nil && f.unconfigured() {
+			return nil, ErrNotConfigured
+		}
 		return nil, ErrNoDevice
 	case f.device > len(groups):
 		return nil, fmt.Errorf("keyboard %d was requested, but only %d found", f.device, len(groups))

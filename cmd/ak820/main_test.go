@@ -171,6 +171,9 @@ func TestTimeYesSendsTheFourClockFrames(t *testing.T) {
 	if r.n.feats != 4 || r.n.firstFeat[0] != 0x04 || r.n.firstFeat[1] != 0x18 || !strings.Contains(r.out.String(), "clock set") {
 		t.Fatalf("feats %d first % x out %q", r.n.feats, r.n.firstFeat[:3], r.out)
 	}
+	if !strings.Contains(r.out.String(), "Fn+Del") {
+		t.Errorf("no Fn+Del hint: %q", r.out)
+	}
 }
 
 func TestProbeYesWritesOneFramePerInterfaceAndLogs(t *testing.T) {
@@ -376,6 +379,9 @@ func TestUploadWarnsWhenHistoryCannotBeSaved(t *testing.T) {
 	if !strings.Contains(r.out.String(), "done") || !strings.Contains(r.err.String(), "warning") {
 		t.Errorf("out %q err %q", r.out, r.err)
 	}
+	if !strings.Contains(r.out.String(), "Fn+Del") {
+		t.Errorf("no Fn+Del hint: %q", r.out)
+	}
 }
 
 func TestUnpluggedKeyboardGetsAPlainMessage(t *testing.T) {
@@ -394,5 +400,23 @@ func TestCancelledUploadExplainsItself(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(r.a.historyDir); len(entries) != 0 {
 		t.Error("a cancelled upload must not be added to history")
+	}
+}
+
+// A keyboard that is plugged in but stuck must not be told to plug in.
+func TestStuckKeyboardGetsAdviceAboutTheHub(t *testing.T) {
+	for _, args := range [][]string{{"list"}, {"setup"}} {
+		r := newRig(t, nil)
+		r.a.finder = r.a.finder.WithUnconfigured(func() bool { return true })
+		if code := r.a.run(context.Background(), args); code != 1 {
+			t.Errorf("%v: exit %d", args, code)
+		}
+		got := r.out.String() + r.err.String()
+		if !strings.Contains(got, "could not finish connecting") || !strings.Contains(got, "USB port on the computer itself") {
+			t.Errorf("%v: %q", args, got)
+		}
+		if strings.Contains(got, "Plug it in") || strings.Contains(got, "Plug the keyboard in with") {
+			t.Errorf("%v must not say to plug it in: %q", args, got)
+		}
 	}
 }

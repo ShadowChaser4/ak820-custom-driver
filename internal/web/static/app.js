@@ -94,7 +94,7 @@ $("btn-connect").onclick = async () => {
     setMsg("connect-msg", "Connecting...");
     await post("/api/time", { dry: false });
     await loadDevices();
-    setMsg("connect-msg", dev.ready ? "Connected! The keyboard clock was set." : "The clock was sent, but the keyboard didn't confirm yet. Try again.", dev.ready ? "ok" : "bad");
+    setMsg("connect-msg", dev.ready ? "Connected! The keyboard clock was set." + (dev.features.flash ? " If the screen is on the clock and you want your picture, press Fn+Del." : "") : "The clock was sent, but the keyboard didn't confirm yet. Try again.", dev.ready ? "ok" : "bad");
   } catch (e) { setMsg("connect-msg", nice(e), "bad"); }
 };
 
@@ -172,14 +172,15 @@ function updateLock() {
 async function sendFlow(endpoint, body, what) {
   try {
     const dry = await post(endpoint, Object.assign({}, body, { dry: true }));
+    const saved = dry.flash ?? dev.features.flash;
     const text = "This will replace the picture on your keyboard screen." +
-      ((dry.flash ?? dev.features.flash) ? " The picture is saved in the keyboard and stays after unplugging." : "");
+      (saved ? " The picture stays on the keyboard after unplugging. After a restart the keyboard shows the clock, so press Fn+Del to open your picture." : "");
     const ok = await confirmDlg({ title: `Send "${what}" to your keyboard?`, text, details: techOf(dry), ok: "Send it" });
     if (!ok) return;
     busy = true; updateLock();
     setMsg("send-msg", "Sending... please don't unplug the keyboard.");
     await sse(endpoint, Object.assign({}, body, { dry: false }));
-    setMsg("send-msg", "Done! Look at your keyboard screen.", "ok");
+    setMsg("send-msg", "Done! Look at your keyboard screen." + (saved ? " After a restart it shows the clock, so press Fn+Del to open your picture." : ""), "ok");
     loadHistory();
   } catch (e) {
     $("prog-box").hidden = true; setMsg("send-msg", nice(e), "bad");

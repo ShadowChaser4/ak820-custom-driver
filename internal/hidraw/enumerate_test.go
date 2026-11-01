@@ -156,3 +156,47 @@ func TestEnumerateOrdersHidrawNumbersNumerically(t *testing.T) {
 		}
 	}
 }
+
+// The state the kernel leaves when a hub runs out of bandwidth: the device is listed,
+// with an empty bConfigurationValue and no hidraw nodes.
+func TestUnconfigured(t *testing.T) {
+	usb := func(t *testing.T, name, vid, pid, cfg string) string {
+		t.Helper()
+		root := t.TempDir()
+		d := filepath.Join(root, "bus/usb/devices", name)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for f, v := range map[string]string{"idVendor": vid, "idProduct": pid, "bConfigurationValue": cfg} {
+			if err := os.WriteFile(filepath.Join(d, f), []byte(v), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return root
+	}
+	wanted := func(pid uint16) bool { return pid == 0x800a }
+	cases := []struct {
+		name, vid, pid, cfg string
+		want                bool
+	}{
+		{"stuck keyboard", "0c45\n", "800a\n", "\n", true},
+		{"working keyboard", "0c45\n", "800a\n", "1\n", false},
+		{"stuck webcam from the same vendor", "0c45\n", "671e\n", "\n", false},
+		{"stuck device from another vendor", "1a2c\n", "800a\n", "\n", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := UnconfiguredAt(usb(t, "1-3.3", c.vid, c.pid, c.cfg), 0x0c45, wanted); got != c.want {
+				t.Errorf("got %v", got)
+			}
+		})
+	}
+	// Hubs and interfaces in the same directory have no idVendor file.
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "bus/usb/devices/1-3.3:1.0"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if UnconfiguredAt(root, 0x0c45, wanted) {
+		t.Error("an entry without ids must be skipped")
+	}
+}

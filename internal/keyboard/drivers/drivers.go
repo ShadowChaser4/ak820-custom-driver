@@ -30,5 +30,7 @@ func System() *keyboard.Finder {
 			}
 			return d, nil
 		},
-	)
+	).WithUnconfigured(func() bool {
+		return hidraw.Unconfigured(keyboard.VendorID, func(pid uint16) bool { return keyboard.SupportedProducts[pid] })
+	})
 }

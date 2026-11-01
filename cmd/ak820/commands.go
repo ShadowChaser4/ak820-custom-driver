@@ -227,7 +227,7 @@ func (a *app) cmdUpload(ctx context.Context, args []string) error {
 	if !*yes {
 		fmt.Fprintln(a.out, "dry run: first packet:", d.First)
 		if d.Persistent {
-			fmt.Fprintln(a.out, "(this keyboard saves the picture in its flash memory; it stays after unplugging)")
+			fmt.Fprintln(a.out, "(the picture stays on the keyboard after unplugging; "+fnDelHint+")")
 		} else {
 			fmt.Fprintln(a.out, "(note: on firmware 1.16 uploads live in RAM and are lost on unplug / mode change)")
 		}
@@ -242,6 +242,9 @@ func (a *app) cmdUpload(ctx context.Context, args []string) error {
 		fmt.Fprintf(a.errw, "warning: the picture was sent, but could not be added to your history: %v\n", err)
 	}
 	fmt.Fprintln(a.out, "done")
+	if d.Persistent {
+		fmt.Fprintln(a.out, "The keyboard is showing your picture. "+strings.ToUpper(fnDelHint[:1])+fnDelHint[1:]+".")
+	}
 	return nil
 }
 
@@ -317,5 +320,8 @@ func (a *app) cmdTime(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Fprintln(a.out, "clock set")
+	if plan.Describe().Persistent {
+		fmt.Fprintln(a.out, "If the screen is on the clock and you want your picture, press Fn+Del.")
+	}
 	return nil
 }

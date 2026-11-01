@@ -394,6 +394,7 @@ func TestDescribe(t *testing.T) {
 	}{
 		{"none", nil, keyboard.ErrNoDevice, keyboard.LayoutUnknown, false, LevelBad, "USB-C"},
 		{"several", nil, &keyboard.MultipleError{N: 2}, keyboard.LayoutUnknown, false, LevelBad, "2 keyboards"},
+		{"plugged in but stuck", nil, keyboard.ErrNotConfigured, keyboard.LayoutUnknown, false, LevelBad, "USB port on the computer itself"},
 		{"no permission", missing, nil, keyboard.LayoutSonix, false, LevelBad, "ak820 setup"},
 		{"unknown layout", ok, nil, keyboard.LayoutUnknown, false, LevelWarn, "new issue"},
 		{"found", ok, nil, keyboard.LayoutSonix, false, LevelWarn, "Connect"},

@@ -35,6 +35,10 @@ func describe(ifaces []hidraw.Info, err error, layout keyboard.Layout, ready boo
 		return Friendly{"More than one keyboard found",
 			fmt.Sprintf("%d keyboards are plugged in. Unplug all but one, or start this program with --device 1 to pick one.", multi.N), LevelBad}
 	}
+	if errors.Is(err, keyboard.ErrNotConfigured) {
+		return Friendly{"The keyboard is plugged in, but it couldn't finish connecting",
+			"This can happen when a USB hub runs out of bandwidth. Plug the keyboard into a USB port on the computer itself, or unplug other devices from the hub, then replug the keyboard.", LevelBad}
+	}
 	if err != nil || len(ifaces) == 0 {
 		return Friendly{"Keyboard not found",
 			"Plug the keyboard into this computer with the USB-C cable and slide the switch on the back to USB. Bluetooth and the 2.4G dongle cannot control the screen.", LevelBad}
