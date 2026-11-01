@@ -1,3 +1,3 @@
-module ak820
+module github.com/ShadowChaser4/ak820-custom-driver
 
-go 1.22
+go 1.25

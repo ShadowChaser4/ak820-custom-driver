@@ -18,12 +18,12 @@ import (
 	"strings"
 	"time"
 
-	"ak820/internal/core"
-	"ak820/internal/hidraw"
-	"ak820/internal/history"
-	"ak820/internal/img"
-	"ak820/internal/setup"
-	"ak820/internal/web"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/core"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/history"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/setup"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/web"
 )
 
 // version is stamped at build time: -ldflags "-X main.version=v1.2.3".

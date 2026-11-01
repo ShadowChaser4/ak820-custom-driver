@@ -1,0 +1,25 @@
+version: "2"
+linters:
+  enable:
+    - errcheck
+    - errorlint
+    - gosec
+    - nilnil
+    - revive
+    - staticcheck
+    - unparam
+  settings:
+    revive:
+      rules:
+        - name: exported
+        - name: package-comments
+        - name: error-naming
+        - name: error-strings
+        - name: errorf
+        - name: var-naming
+        - name: receiver-naming
+        - name: unused-parameter
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [errcheck, gosec, unparam, revive]

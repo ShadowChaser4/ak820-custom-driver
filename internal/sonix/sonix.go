@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"time"
 
-	"ak820/internal/img"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
 )
 
 const (

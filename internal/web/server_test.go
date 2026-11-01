@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"ak820/internal/core"
-	"ak820/internal/hidraw"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/core"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
 )
 
 const host = "127.0.0.1:9999"

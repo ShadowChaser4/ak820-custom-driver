@@ -3,7 +3,7 @@ PREFIX  ?= $(HOME)/.local
 LDFLAGS  = -s -w -X main.version=$(VERSION)
 GOFLAGS_STATIC = CGO_ENABLED=0
 
-.PHONY: build test vet fmt check install uninstall release clean fuzz
+.PHONY: build test vet fmt lint check install uninstall release clean fuzz
 
 build: ## build ./ak820 (static, no dependencies)
 	$(GOFLAGS_STATIC) go build -trimpath -ldflags "$(LDFLAGS)" -o ak820 ./cmd/ak820
@@ -17,7 +17,11 @@ vet:
 fmt: ## fail if any file needs gofmt
 	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "needs gofmt:"; echo "$$out"; exit 1; fi
 
-check: fmt vet test ## what CI runs
+LINT_VERSION ?= latest
+lint: ## golangci-lint, fetched on demand (not a module dependency)
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(LINT_VERSION) run ./...
+
+check: fmt vet test ## tests and vet; CI also runs lint
 
 fuzz: ## 10 seconds on each fuzz target
 	go test ./internal/hidraw -run XXX -fuzz ^FuzzParseDescriptor$$ -fuzztime 10s

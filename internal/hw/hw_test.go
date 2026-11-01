@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"ak820/internal/core"
-	"ak820/internal/gallery"
-	"ak820/internal/hidraw"
-	"ak820/internal/img"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/core"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/gallery"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
 )
 
 // Run:  go test -tags hardware -v ./internal/hw

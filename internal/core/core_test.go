@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"ak820/internal/hidraw"
-	"ak820/internal/img"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
 )
 
 func desc(s string) []byte {

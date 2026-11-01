@@ -11,7 +11,7 @@ Some firmware revisions expose different interfaces from the ones other tools ex
 
 ## Install and first run
 
-1. **Get the program.** Download `ak820_<version>_linux_amd64.tar.gz` (or `arm64`) from the project's releases page and unpack it, or build it yourself (needs Go 1.22+):
+1. **Get the program.** Download `ak820_<version>_linux_amd64.tar.gz` (or `arm64`) from the project's releases page and unpack it, or build it yourself (needs Go 1.25+):
    ```sh
    make install        # builds and installs to ~/.local/bin/ak820 (no sudo needed)
    ```
@@ -47,7 +47,7 @@ The layout is detected from the HID report descriptors; run `./ak820 list` to se
 
 - Linux (x86-64 or arm64). The release is a single static file with no dependencies.
 - The keyboard connected **by USB cable with the back switch in USB mode**. Bluetooth and the 2.4G dongle cannot reach the screen.
-- Go 1.22 or newer only if you build it yourself (`make build`, `make check`, `make release`).
+- Go 1.25 or newer only if you build it yourself (`make build`, `make check`, `make release`).
 
 ## Permissions (one time)
 

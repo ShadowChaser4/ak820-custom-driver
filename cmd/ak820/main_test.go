@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"ak820/internal/core"
-	"ak820/internal/hidraw"
-	"ak820/internal/setup"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/core"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/setup"
 )
 
 // vdesc builds a minimal vendor HID report descriptor: usage page, and

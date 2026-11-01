@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"ak820/internal/hidraw"
-	"ak820/internal/proto"
-	"ak820/internal/sonix"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/proto"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/sonix"
 )
 
 const VendorID = 0x0C45

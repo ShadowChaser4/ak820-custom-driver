@@ -24,11 +24,11 @@ import (
 	"sync"
 	"time"
 
-	"ak820/internal/core"
-	"ak820/internal/gallery"
-	"ak820/internal/hidraw"
-	"ak820/internal/history"
-	"ak820/internal/img"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/core"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/gallery"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/history"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
 )
 
 //go:embed static

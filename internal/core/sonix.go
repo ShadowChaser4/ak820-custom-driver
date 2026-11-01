@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"time"
 
-	"ak820/internal/hidraw"
-	"ak820/internal/img"
-	"ak820/internal/sonix"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/hidraw"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/sonix"
 )
 
 // sonixPair returns the control and data interfaces if this keyboard uses the

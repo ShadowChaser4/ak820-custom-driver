@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"ak820/internal/img"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
 )
 
 func init() { sleep = func(time.Duration) {} }

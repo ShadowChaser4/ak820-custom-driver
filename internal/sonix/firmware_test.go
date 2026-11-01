@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"ak820/internal/img"
+	"github.com/ShadowChaser4/ak820-custom-driver/internal/img"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files")
