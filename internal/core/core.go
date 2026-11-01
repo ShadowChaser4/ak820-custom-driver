@@ -177,6 +177,9 @@ func Layout(all []hidraw.Info) string {
 
 var ErrUnsupported = errors.New("this keyboard does not support that")
 
+// ErrUnknownLayout means the keyboard was found but its HID layout is not recognised.
+var ErrUnknownLayout = errors.New("this keyboard talks in a way this tool does not know yet")
+
 // MarkConnected records that the control channel on node answered in this
 // process. It lives in memory only.
 func (c *Core) MarkConnected(node string) {
@@ -220,13 +223,13 @@ func (c *Core) Describe(all []hidraw.Info, err error) Friendly {
 	for _, i := range all {
 		if !i.Accessible() {
 			return Friendly{"The keyboard is there, but this program is not allowed to use it",
-				"This is a permission setting on your computer. Install the included permission file (udev/70-ak820.rules), then unplug and replug the keyboard.", "bad"}
+				"This is a permission setting on your computer. Open a terminal, run \"ak820 setup\" and follow the steps, then unplug and replug the keyboard.", "bad"}
 		}
 	}
 	switch Layout(all) {
 	case "unknown":
 		return Friendly{"This keyboard version is not supported yet",
-			"The keyboard was found, but it talks in a way this program does not know. Open Advanced and copy the report to share it with the developers.", "warn"}
+			"The keyboard was found, but it talks in a way this program does not know. Open Advanced, copy the report and paste it into a new issue on the project page so support can be added.", "warn"}
 	}
 	if c.Ready(all) {
 		return Friendly{"Connected", "Your keyboard is ready. Pick a picture below.", "ok"}
@@ -285,7 +288,7 @@ func (c *Core) Resolve(all []hidraw.Info, role string, t Target) (hidraw.Info, i
 	}
 	cfg, bulk := LegacyLayout(all)
 	if cfg == nil || bulk == nil {
-		return hidraw.Info{}, 0, errors.New("this keyboard does not use a known layout; run the probe in Advanced and share the report")
+		return hidraw.Info{}, 0, ErrUnknownLayout
 	}
 	i := cfg
 	if role == "data" {
@@ -606,5 +609,14 @@ func Report(all []hidraw.Info) string {
 	for _, i := range all {
 		fmt.Fprintf(&b, "- `%s` (%d B): `% x`\n", i.Node, len(i.Raw), i.Raw)
 	}
+	return b.String()
+}
+
+// IssueReport is a paste-ready Markdown block for a bug report or a new-keyboard request.
+func IssueReport(all []hidraw.Info, version, platform string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "**ak820** %s on %s\n\n", version, platform)
+	fmt.Fprintf(&b, "**Layout detected:** %s\n\n", Layout(all))
+	b.WriteString(Report(all))
 	return b.String()
 }

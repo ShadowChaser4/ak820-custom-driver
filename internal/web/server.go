@@ -48,6 +48,7 @@ type preview struct {
 type Server struct {
 	Core         *core.Core
 	Token        string
+	Version      string   // shown in the page footer
 	AllowedHosts []string // e.g. "127.0.0.1:8080"
 
 	mu       sync.Mutex
@@ -171,7 +172,7 @@ func dto(i hidraw.Info) ifaceDTO {
 
 func (s *Server) devices(w http.ResponseWriter, r *http.Request) {
 	all, err := s.Core.Devices()
-	resp := map[string]any{"config": s.Core.State(), "friendly": s.Core.Describe(all, err)}
+	resp := map[string]any{"config": s.Core.State(), "version": s.Version, "friendly": s.Core.Describe(all, err)}
 	if err != nil {
 		resp["error"] = err.Error()
 		resp["ready"], resp["profile"], resp["layout"] = false, "unknown", "unknown"

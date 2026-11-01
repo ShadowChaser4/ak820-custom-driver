@@ -64,6 +64,7 @@ async function loadDevices() {
     : { title: d.error ? "Keyboard not found" : "Not connected yet", message: d.error ? nice({ message: d.error }) : "Press the button below to connect.", level: d.error ? "bad" : "warn" });
   const title = d.ready && f.level === "ok" && !/connected/i.test(f.title) ? "Connected" : f.title;
   $("conn").dataset.level = f.level; $("conn-title").textContent = title; $("conn-msg").textContent = f.message;
+  if (d.version) $("ver").textContent = "ak820 " + d.version;
   $("checklist").hidden = !!d.ready;
   $("perm-tip").hidden = !/permission|access|denied/i.test((f.title + " " + f.message + " " + (d.error || "")));
   $("btn-connect").textContent = d.ready ? "Set the keyboard clock again" : "Connect & set the keyboard clock";

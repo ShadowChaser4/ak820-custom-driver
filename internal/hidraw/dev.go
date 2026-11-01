@@ -85,6 +85,9 @@ func EnumerateAt(sysRoot string, vid uint16) ([]Info, error) {
 // Accessible reports whether the current user can read and write the node.
 func (i Info) Accessible() bool { return syscall.Access(i.Node, 6) == nil }
 
+// ErrPermission means the node exists but this user may not open it (missing udev rule).
+var ErrPermission = errors.New("no permission to use the keyboard")
+
 // Dev is an open hidraw node.
 type Dev struct {
 	f    *os.File
@@ -95,7 +98,7 @@ func Open(i Info) (*Dev, error) {
 	fd, err := syscall.Open(i.Node, syscall.O_RDWR|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if err != nil {
 		if errors.Is(err, syscall.EACCES) {
-			return nil, fmt.Errorf("no permission on %s — install udev/70-ak820.rules and replug", i.Node)
+			return nil, fmt.Errorf("%w on %s", ErrPermission, i.Node)
 		}
 		return nil, err
 	}

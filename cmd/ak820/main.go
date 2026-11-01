@@ -5,109 +5,239 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"ak820/internal/core"
+	"ak820/internal/hidraw"
 	"ak820/internal/history"
 	"ak820/internal/img"
+	"ak820/internal/setup"
 	"ak820/internal/web"
 )
 
-var c = core.New()
+// version is stamped at build time: -ldflags "-X main.version=v1.2.3".
+var version = "dev"
 
-func main() {
-	if len(os.Args) < 2 {
-		usage()
-	}
-	cmd, args := os.Args[1], os.Args[2:]
-	var err error
-	switch cmd {
-	case "list":
-		err = cmdList(false)
-	case "report":
-		err = cmdList(true)
-	case "probe":
-		err = cmdProbe(args)
-	case "info":
-		err = cmdInfo(args)
-	case "upload":
-		err = cmdUpload(args)
-	case "builtin":
-		err = cmdBuiltin(args)
-	case "time":
-		err = cmdTime(args)
-	case "ui":
-		err = cmdUI(args)
-	default:
-		usage()
-	}
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
-	}
+// app holds everything a command needs, so tests can swap the pieces.
+type app struct {
+	c        *core.Core
+	out      io.Writer
+	errw     io.Writer
+	ui       func(addr string, noOpen bool) error
+	ruleDirs []string
+	prog     string // how the user invoked us ("ak820" via the PATH, else e.g. "./ak820"); used in hints
 }
 
-func usage() {
-	fmt.Fprint(os.Stderr, `ak820 <command> [flags]
+func main() {
+	a := &app{c: core.New(), out: os.Stdout, errw: os.Stderr, ruleDirs: setup.RuleDirs, prog: progName(os.Args[0])}
+	a.ui = a.serveUI
+	os.Exit(a.run(os.Args[1:]))
+}
 
-  list      show HID interfaces (sysfs only, no device I/O)
-  report    same, as Markdown for a bug report
-  probe     send the read-only GET_DEVICE_INFO to each candidate interface (needs --yes)
-  info      GET_DEVICE_INFO on a chosen interface (needs --yes)
-  upload    send an image/GIF to the screen (needs --yes)
-  builtin   select a built-in animation by index (needs --yes)
-  time      sync the screen clock (needs --yes)
-  ui        start the local web UI on 127.0.0.1
+const usageText = `ak820 — change the picture on the AK820 Pro keyboard screen
 
-Commands that write to the keyboard print what they would send and exit unless --yes is given.
-`)
-	os.Exit(2)
+  ak820              start the app in your browser (same as "ak820 ui")
+  ak820 setup        check that this computer is ready, and say how to fix it if not
+  ak820 list         show the keyboard's connections (no device I/O)
+  ak820 report       same, as a table;  "report --issue" is a paste-ready bug report
+  ak820 time         connect and set the keyboard clock (needs --yes)
+  ak820 upload FILE  send a PNG, JPEG or GIF to the screen (needs --yes)
+  ak820 builtin N    pick a built-in animation, older keyboards only (needs --yes)
+  ak820 probe        send a harmless test message to every connection (needs --yes)
+  ak820 info         read device info, older keyboards only (needs --yes)
+  ak820 version
+
+Anything that writes to the keyboard only prints what it WOULD send until you add --yes.
+Several keyboards plugged in?  ak820 --device 2 <command>   (or set AK820_DEVICE=2)
+`
+
+// progName is the command name to show in hints: exactly what the user typed
+// ("ak820" when run through the PATH, "./ak820" when run from a folder).
+func progName(arg0 string) string { return arg0 }
+
+func (a *app) name() string {
+	if a.prog == "" {
+		return "ak820"
+	}
+	return a.prog
+}
+
+func (a *app) run(args []string) int {
+	// leading global option: --device N
+	if v := os.Getenv("AK820_DEVICE"); v != "" {
+		a.c.Device, _ = strconv.Atoi(v)
+	}
+	for len(args) >= 2 && (args[0] == "--device" || args[0] == "-device") {
+		n, err := strconv.Atoi(args[1])
+		if err != nil || n < 1 {
+			fmt.Fprintln(a.errw, "error: --device needs a number like 1 or 2")
+			return 2
+		}
+		a.c.Device = n
+		args = args[2:]
+	}
+	cmd, rest := "ui", []string(nil)
+	if len(args) > 0 {
+		cmd, rest = args[0], args[1:]
+	}
+	var err error
+	switch cmd {
+	case "ui":
+		err = a.cmdUI(rest)
+	case "setup":
+		err = a.cmdSetup(rest)
+	case "list":
+		err = a.cmdList(false, false)
+	case "report":
+		fs := flag.NewFlagSet("report", flag.ContinueOnError)
+		fs.SetOutput(a.errw)
+		issue := fs.Bool("issue", false, "paste-ready bug report")
+		if fs.Parse(rest) != nil {
+			return 2
+		}
+		err = a.cmdList(true, *issue)
+	case "probe":
+		err = a.cmdProbe(rest)
+	case "info":
+		err = a.cmdInfo(rest)
+	case "upload":
+		err = a.cmdUpload(rest)
+	case "builtin":
+		err = a.cmdBuiltin(rest)
+	case "time":
+		err = a.cmdTime(rest)
+	case "version", "--version", "-v":
+		fmt.Fprintf(a.out, "ak820 %s (%s/%s)\n", version, runtime.GOOS, runtime.GOARCH)
+	case "help", "--help", "-h":
+		fmt.Fprint(a.out, usageText)
+	default:
+		fmt.Fprintf(a.errw, "unknown command %q\n\n%s", cmd, usageText)
+		return 2
+	}
+	if err != nil {
+		if err != errExit {
+			fmt.Fprintln(a.errw, strings.ReplaceAll(friendlyErr(err), "`ak820 ", "`"+a.name()+" "))
+		}
+		return 1
+	}
+	return 0
+}
+
+// friendlyErr turns internal errors into what to do next, in plain words.
+func friendlyErr(err error) string {
+	var multi core.ErrMultiple
+	switch {
+	case errors.Is(err, core.ErrNoDevice):
+		return "No AK820 keyboard found.\n  Plug it in with the USB-C cable and slide the switch on the back to USB.\n  (Bluetooth and the 2.4G dongle cannot control the screen.)\n  Run `ak820 setup` to check this computer."
+	case errors.Is(err, hidraw.ErrPermission):
+		return "This computer is not letting ak820 use the keyboard yet.\n  Run `ak820 setup` and follow the steps, then unplug and replug the keyboard."
+	case errors.Is(err, core.ErrUnknownLayout):
+		return "Your keyboard was found, but it talks in a way ak820 does not know yet.\n  Run `ak820 report --issue` and paste the result into a new issue so support can be added."
+	case errors.As(err, &multi), errors.Is(err, core.ErrUnsupported):
+		return err.Error()
+	case strings.Contains(err.Error(), "no reply"), strings.Contains(err.Error(), "not answering"), strings.Contains(err.Error(), "timed out"):
+		return "error: " + err.Error() + "\n  The keyboard did not answer. Check the cable and that the switch on the back is on USB, then try again."
+	}
+	return "error: " + err.Error()
 }
 
 // ---- list / report ----------------------------------------------------------
 
-func cmdList(md bool) error {
-	all, err := c.Devices()
+func (a *app) cmdList(md, issue bool) error {
+	all, err := a.c.Devices()
 	if err != nil {
 		return err
 	}
-	if md {
-		fmt.Print(core.Report(all))
-		return nil
-	}
-	for _, i := range all {
-		d := i.D
-		fmt.Printf("%s  if%d  %04x:%04x  page 0x%04X  in %4d  out %4d  feat %3d  rw=%v  %s\n",
-			i.Node, i.Iface, i.VID, i.PID, d.Page, d.InBytes(), d.OutBytes(), d.FeatBytes(), i.Accessible(), i.Name)
+	switch {
+	case issue:
+		fmt.Fprint(a.out, core.IssueReport(all, version, runtime.GOOS+"/"+runtime.GOARCH+" "+kernel()))
+	case md:
+		fmt.Fprint(a.out, core.Report(all))
+	default:
+		for _, i := range all {
+			d := i.D
+			fmt.Fprintf(a.out, "%s  if%d  %04x:%04x  page 0x%04X  in %4d  out %4d  feat %3d  rw=%v  %s\n",
+				i.Node, i.Iface, i.VID, i.PID, d.Page, d.InBytes(), d.OutBytes(), d.FeatBytes(), i.Accessible(), i.Name)
+		}
 	}
 	return nil
 }
 
+func kernel() string {
+	b, _ := os.ReadFile("/proc/sys/kernel/osrelease")
+	return strings.TrimSpace(string(b))
+}
+
+// ---- setup --------------------------------------------------------------------
+
+func (a *app) cmdSetup(args []string) error {
+	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
+	fs.SetOutput(a.errw)
+	printRule := fs.Bool("print-rule", false, "print the udev rule and exit")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *printRule {
+		fmt.Fprint(a.out, setup.Rule)
+		return nil
+	}
+	all, err := a.c.Devices()
+	in := setup.Input{FindErr: err, RuleDirs: a.ruleDirs, Prog: a.name()}
+	if errors.Is(err, core.ErrNoDevice) {
+		in.FindErr = nil // handled by the default "plug it in" advice
+	}
+	if err == nil {
+		in.Found, in.Layout = len(all), core.Layout(all)
+		in.Name = fmt.Sprintf("%s %04x:%04x", strings.TrimPrefix(all[0].Name, "SONiX "), all[0].VID, all[0].PID)
+		for _, i := range all {
+			if i.Accessible() {
+				in.Accessible++
+			}
+		}
+	}
+	items := setup.Check(in)
+	fmt.Fprint(a.out, "ak820 setup\n\n"+setup.Format(items, a.name()))
+	if !setup.AllOK(items) {
+		return errExit
+	}
+	return nil
+}
+
+// errExit makes a command exit non-zero without printing another message.
+var errExit = errors.New("")
+
 // ---- probe ------------------------------------------------------------------
 
-func cmdProbe(args []string) error {
-	fs := flag.NewFlagSet("probe", flag.ExitOnError)
+func (a *app) cmdProbe(args []string) error {
+	fs := flag.NewFlagSet("probe", flag.ContinueOnError)
+	fs.SetOutput(a.errw)
 	yes := fs.Bool("yes", false, "actually send (read-only GET_DEVICE_INFO) to the keyboard")
 	logf := fs.String("log", "PROBE-LOG.md", "append results here")
 	feat := fs.Bool("feature", true, "also try a read-only GET_FEATURE on interfaces that have one")
-	fs.Parse(args)
-	res, err := c.Probe(!*yes, *feat)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	res, err := a.c.Probe(!*yes, *feat)
 	if err != nil {
 		return err
 	}
-	fmt.Print(res.Text)
+	fmt.Fprint(a.out, res.Text)
 	if *yes {
 		if f, err := os.OpenFile(*logf, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
 			f.WriteString(res.Text)
 			f.Close()
-			fmt.Println("\nappended to", *logf)
+			fmt.Fprintln(a.out, "\nappended to", *logf)
 		}
 	}
 	return nil
@@ -115,28 +245,32 @@ func cmdProbe(args []string) error {
 
 // ---- info / upload / builtin / time ------------------------------------------
 
-func cmdInfo(args []string) error {
-	fs := flag.NewFlagSet("info", flag.ExitOnError)
+func (a *app) cmdInfo(args []string) error {
+	fs := flag.NewFlagSet("info", flag.ContinueOnError)
+	fs.SetOutput(a.errw)
 	yes := fs.Bool("yes", false, "send to the keyboard")
 	node := fs.String("node", "", "hidraw node (e.g. hidraw8); default: detected legacy config interface")
 	plen := fs.Int("len", 0, "output report length (default: from descriptor)")
-	fs.Parse(args)
-	r, err := c.Info(core.Target{Node: *node, Len: *plen}, !*yes)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	r, err := a.c.Info(core.Target{Node: *node, Len: *plen}, !*yes)
 	if r != nil && r.Dry {
 		for _, f := range r.Frames {
-			fmt.Printf("dry run: would write %s: %s\n", r.Node, f)
+			fmt.Fprintf(a.out, "dry run: would write %s: %s\n", r.Node, f)
 		}
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%+v\n", *r.Info)
+	fmt.Fprintf(a.out, "%+v\n", *r.Info)
 	return nil
 }
 
-func cmdUpload(args []string) error {
-	fs := flag.NewFlagSet("upload", flag.ExitOnError)
+func (a *app) cmdUpload(args []string) error {
+	fs := flag.NewFlagSet("upload", flag.ContinueOnError)
+	fs.SetOutput(a.errw)
 	yes := fs.Bool("yes", false, "send to the keyboard")
 	node := fs.String("node", "", "data interface (default: detected from the layout)")
 	plen := fs.Int("len", 0, "output report length (default: from descriptor)")
@@ -145,7 +279,9 @@ func cmdUpload(args []string) error {
 	delay := fs.Int("delay", 0, "override per-frame delay (ms)")
 	maxFrames := fs.Int("max-frames", 255, "truncate to this many frames")
 	preview := fs.String("preview", "", "write a PNG preview of frame 0 and continue")
-	fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	if fs.NArg() != 1 {
 		return fmt.Errorf("usage: ak820 upload [flags] <image>")
 	}
@@ -166,97 +302,117 @@ func cmdUpload(args []string) error {
 		}
 	}
 	t := core.Target{Node: *node, Len: *plen}
-	r, err := c.Upload(t, payload, !*yes, func(d, n int) { fmt.Fprintf(os.Stderr, "\r  uploading %3d%%", 100*d/n) })
+	r, err := a.c.Upload(t, payload, !*yes, func(d, n int) { fmt.Fprintf(a.errw, "\r  uploading %3d%%", 100*d/n) })
 	if r != nil {
-		fmt.Printf("%d frame(s), %d bytes, %d packets of %d B to %s\n", len(frames), len(payload), r.Packets, r.Len, r.Node)
+		fmt.Fprintf(a.out, "%d frame(s), %d bytes, %d packets of %d B to %s\n", len(frames), len(payload), r.Packets, r.Len, r.Node)
 	}
 	if err != nil {
 		return err
 	}
 	if r.Dry {
-		fmt.Println("dry run: first packet:", r.First)
-		fmt.Println("(note: on firmware 1.16 uploads live in RAM and are lost on unplug / mode change)")
+		fmt.Fprintln(a.out, "dry run: first packet:", r.First)
+		if r.Flash {
+			fmt.Fprintln(a.out, "(this keyboard saves the picture in its flash memory; it stays after unplugging)")
+		} else {
+			fmt.Fprintln(a.out, "(note: on firmware 1.16 uploads live in RAM and are lost on unplug / mode change)")
+		}
+		fmt.Fprintln(a.out, "nothing was sent. Add --yes to send it.")
 		return nil
 	}
-	fmt.Fprintln(os.Stderr)
-	_ = history.Save(c.HistoryDir(), payload, fs.Arg(0))
-	fmt.Println("done")
+	fmt.Fprintln(a.errw)
+	_ = history.Save(a.c.HistoryDir(), payload, fs.Arg(0))
+	fmt.Fprintln(a.out, "done")
 	return nil
 }
 
-func cmdBuiltin(args []string) error {
-	fs := flag.NewFlagSet("builtin", flag.ExitOnError)
+func (a *app) cmdBuiltin(args []string) error {
+	fs := flag.NewFlagSet("builtin", flag.ContinueOnError)
+	fs.SetOutput(a.errw)
 	yes := fs.Bool("yes", false, "send to the keyboard")
 	node := fs.String("node", "", "data interface (default: detected from the layout)")
 	plen := fs.Int("len", 0, "output report length")
-	fs.Parse(args)
-	var idx int
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	if fs.NArg() != 1 {
 		return fmt.Errorf("usage: ak820 builtin [flags] <index>")
 	}
-	if _, err := fmt.Sscanf(fs.Arg(0), "%d", &idx); err != nil {
-		return err
+	idx, err := strconv.Atoi(fs.Arg(0))
+	if err != nil {
+		return fmt.Errorf("the animation number must be a number, got %q", fs.Arg(0))
 	}
-	r, err := c.Builtin(core.Target{Node: *node, Len: *plen}, idx, !*yes)
+	r, err := a.c.Builtin(core.Target{Node: *node, Len: *plen}, idx, !*yes)
 	if err != nil {
 		return err
 	}
 	if r.Dry {
-		fmt.Printf("dry run: would write %s: %s\n", r.Node, r.First)
+		fmt.Fprintf(a.out, "dry run: would write %s: %s\n", r.Node, r.First)
 	} else {
-		fmt.Println("sent")
+		fmt.Fprintln(a.out, "sent")
 	}
 	return nil
 }
 
-func cmdTime(args []string) error {
-	fs := flag.NewFlagSet("time", flag.ExitOnError)
+func (a *app) cmdTime(args []string) error {
+	fs := flag.NewFlagSet("time", flag.ContinueOnError)
+	fs.SetOutput(a.errw)
 	yes := fs.Bool("yes", false, "send to the keyboard")
-	node := fs.String("node", "", "command interface (default: detected legacy config interface)")
+	node := fs.String("node", "", "command interface (default: detected)")
 	plen := fs.Int("len", 0, "output report length")
-	fs.Parse(args)
-	r, err := c.SetTime(core.Target{Node: *node, Len: *plen}, time.Now(), !*yes)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	r, err := a.c.SetTime(core.Target{Node: *node, Len: *plen}, time.Now(), !*yes)
 	if err != nil {
 		return err
 	}
 	if r.Dry {
-		fmt.Printf("dry run: would write %s: %s\n", r.Node, r.First)
+		fmt.Fprintf(a.out, "dry run: would write %s: %s\n", r.Node, r.First)
+		fmt.Fprintln(a.out, "nothing was sent. Add --yes to send it.")
 	} else {
-		fmt.Println("clock set")
+		fmt.Fprintln(a.out, "clock set")
 	}
 	return nil
 }
 
 // ---- ui -----------------------------------------------------------------------
 
-func cmdUI(args []string) error {
-	fs := flag.NewFlagSet("ui", flag.ExitOnError)
+func (a *app) cmdUI(args []string) error {
+	fs := flag.NewFlagSet("ui", flag.ContinueOnError)
+	fs.SetOutput(a.errw)
 	addr := fs.String("addr", "127.0.0.1:0", "listen address (loopback only)")
 	noOpen := fs.Bool("no-open", false, "don't open the browser")
-	fs.Parse(args)
-	host, _, err := net.SplitHostPort(*addr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return a.ui(*addr, *noOpen)
+}
+
+func (a *app) serveUI(addr string, noOpen bool) error {
+	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		return err
 	}
 	if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
 		return fmt.Errorf("--addr must be a loopback address (127.0.0.1 or localhost), got %q", host)
 	}
-	ln, err := net.Listen("tcp", *addr)
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
 	port := ln.Addr().(*net.TCPAddr).Port
 	s := &web.Server{
-		Core:  c,
-		Token: web.NewToken(),
+		Core:    a.c,
+		Token:   web.NewToken(),
+		Version: version,
 		AllowedHosts: []string{
 			fmt.Sprintf("127.0.0.1:%d", port), fmt.Sprintf("localhost:%d", port),
 		},
 	}
 	url := fmt.Sprintf("http://127.0.0.1:%d/#token=%s", port, s.Token)
-	fmt.Println("ak820 UI:", url)
-	fmt.Println("nothing is written to the keyboard until you confirm in the browser; Ctrl-C to stop")
-	if !*noOpen && os.Getenv("DISPLAY")+os.Getenv("WAYLAND_DISPLAY") != "" {
+	fmt.Fprintln(a.out, "ak820 is running. Open this address in your browser:\n  "+url)
+	fmt.Fprintln(a.out, "Nothing is written to the keyboard until you confirm in the browser. Press Ctrl-C to stop.")
+	if !noOpen && os.Getenv("DISPLAY")+os.Getenv("WAYLAND_DISPLAY") != "" {
 		_ = exec.Command("xdg-open", url).Start()
 	}
 	srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
