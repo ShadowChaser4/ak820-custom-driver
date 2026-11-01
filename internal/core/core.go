@@ -4,7 +4,6 @@
 package core
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -33,8 +32,13 @@ type Core struct {
 	mu        sync.Mutex // serialises device access
 	Enumerate func() ([]hidraw.Info, error)
 	OpenDev   func(hidraw.Info) (DevIO, error)
-	ConfigDir string
-	DataDir   string
+	DataDir   string // only the upload history is stored on disk
+
+	// In-memory session. Nothing about device nodes is ever written to disk:
+	// /dev/hidrawN numbers change on every replug and differ between machines.
+	smu       sync.Mutex
+	connected string // node whose control channel passed the connection check in this process
+	dataNode  string // optional upload-interface override chosen in the UI
 }
 
 func New() *Core {
@@ -47,8 +51,7 @@ func New() *Core {
 			}
 			return d, nil
 		},
-		ConfigDir: filepath.Join(xdg("XDG_CONFIG_HOME", ".config"), "ak820"),
-		DataDir:   filepath.Join(xdg("XDG_DATA_HOME", ".local/share"), "ak820"),
+		DataDir: filepath.Join(xdg("XDG_DATA_HOME", ".local/share"), "ak820"),
 	}
 }
 
@@ -146,14 +149,31 @@ func Layout(all []hidraw.Info) string {
 
 var ErrUnsupported = errors.New("this keyboard does not support that")
 
-// Ready reports whether a command target has been confirmed AND still exists
-// (hidraw numbers change when the cable is replugged).
+// MarkConnected records that the control channel on node answered in this
+// process. It lives in memory only.
+func (c *Core) MarkConnected(node string) {
+	c.smu.Lock()
+	c.connected = node
+	c.smu.Unlock()
+}
+
+// SetDataNode overrides the upload interface for this session ("" clears it).
+func (c *Core) SetDataNode(node string) {
+	c.smu.Lock()
+	c.dataNode = node
+	c.smu.Unlock()
+}
+
+// Ready reports whether the keyboard was connected in this process AND that
+// node still exists (hidraw numbers change when the cable is replugged).
 func (c *Core) Ready(all []hidraw.Info) bool {
-	cf := c.Config()
-	if cf.Cmd.Node == "" {
+	c.smu.Lock()
+	n := c.connected
+	c.smu.Unlock()
+	if n == "" {
 		return false
 	}
-	_, err := Find(all, cf.Cmd.Node)
+	_, err := Find(all, n)
 	return err == nil
 }
 
@@ -193,39 +213,30 @@ type Target struct {
 	Len  int    `json:"len"`
 }
 
-// Config is the saved target. Cmd is saved only after a real GET_DEVICE_INFO
-// reply on it ("confirmed"). Data is the upload interface; empty = same as Cmd.
+// Config is the in-memory session state, shaped for the UI.
 type Config struct {
-	Cmd  Target `json:"cmd"`
-	Data Target `json:"data"`
+	Cmd  Target `json:"cmd"`  // node connected in this session (Len unused)
+	Data Target `json:"data"` // upload-interface override, if any
 }
 
-func (c *Core) cfgPath() string { return filepath.Join(c.ConfigDir, "target.json") }
-
-func (c *Core) Config() Config {
-	var cf Config
-	if b, err := os.ReadFile(c.cfgPath()); err == nil {
-		_ = json.Unmarshal(b, &cf)
-	}
-	return cf
-}
-
-func (c *Core) SaveConfig(cf Config) error {
-	if err := os.MkdirAll(c.ConfigDir, 0o755); err != nil {
-		return err
-	}
-	b, _ := json.MarshalIndent(cf, "", "  ")
-	return os.WriteFile(c.cfgPath(), b, 0o644)
+func (c *Core) State() Config {
+	c.smu.Lock()
+	defer c.smu.Unlock()
+	return Config{Cmd: Target{Node: c.connected}, Data: Target{Node: c.dataNode}}
 }
 
 // Resolve picks the interface and report length for role "cmd" or "data".
-// Order: explicit t, saved config, legacy layout.
+// Order: explicit t (a missing explicit node is an error), the session's
+// upload override, then layout detection on the current enumeration.
 func (c *Core) Resolve(all []hidraw.Info, role string, t Target) (hidraw.Info, int, error) {
-	if t.Node == "" {
-		cf := c.Config()
-		t = cf.Cmd
-		if role == "data" && cf.Data.Node != "" {
-			t = cf.Data
+	if t.Node == "" && role == "data" {
+		c.smu.Lock()
+		o := c.dataNode
+		c.smu.Unlock()
+		if o != "" {
+			if _, err := Find(all, o); err == nil { // a stale override is ignored
+				t = Target{Node: o}
+			}
 		}
 	}
 	if t.Node != "" {
@@ -407,12 +418,15 @@ type InfoResult struct {
 	Info   *proto.Info `json:"info,omitempty"`
 }
 
-// Info sends GET_DEVICE_INFO to t (or the saved/legacy command interface).
-// On a real reply with save=true the target is stored as confirmed.
-func (c *Core) Info(t Target, dry, save bool) (*InfoResult, error) {
+// Info sends GET_DEVICE_INFO to t (or the detected legacy command interface).
+// A real reply marks the keyboard connected for this session.
+func (c *Core) Info(t Target, dry bool) (*InfoResult, error) {
 	all, err := c.Devices()
 	if err != nil {
 		return nil, err
+	}
+	if _, _, ok, _ := c.sonixPair(t); ok {
+		return nil, fmt.Errorf("%w: this keyboard has no device-info command. Run `ak820 time --yes` to connect and set the clock instead", ErrUnsupported)
 	}
 	i, n, err := c.Resolve(all, "cmd", t)
 	if err != nil {
@@ -442,13 +456,7 @@ func (c *Core) Info(t Target, dry, save bool) (*InfoResult, error) {
 		return res, err
 	}
 	res.Info = &in
-	if save {
-		cf := c.Config()
-		cf.Cmd = Target{i.Node, n}
-		if err := c.SaveConfig(cf); err != nil {
-			return res, err
-		}
-	}
+	c.MarkConnected(i.Node)
 	return res, nil
 }
 

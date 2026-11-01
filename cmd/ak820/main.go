@@ -118,11 +118,10 @@ func cmdProbe(args []string) error {
 func cmdInfo(args []string) error {
 	fs := flag.NewFlagSet("info", flag.ExitOnError)
 	yes := fs.Bool("yes", false, "send to the keyboard")
-	node := fs.String("node", "", "hidraw node (e.g. hidraw8); default: saved or legacy config interface")
+	node := fs.String("node", "", "hidraw node (e.g. hidraw8); default: detected legacy config interface")
 	plen := fs.Int("len", 0, "output report length (default: from descriptor)")
-	save := fs.Bool("save", false, "remember this interface as the confirmed command target (used by the UI)")
 	fs.Parse(args)
-	r, err := c.Info(core.Target{Node: *node, Len: *plen}, !*yes, *save)
+	r, err := c.Info(core.Target{Node: *node, Len: *plen}, !*yes)
 	if r != nil && r.Dry {
 		for _, f := range r.Frames {
 			fmt.Printf("dry run: would write %s: %s\n", r.Node, f)
@@ -139,7 +138,7 @@ func cmdInfo(args []string) error {
 func cmdUpload(args []string) error {
 	fs := flag.NewFlagSet("upload", flag.ExitOnError)
 	yes := fs.Bool("yes", false, "send to the keyboard")
-	node := fs.String("node", "", "data interface (default: saved or legacy FF67 interface)")
+	node := fs.String("node", "", "data interface (default: detected from the layout)")
 	plen := fs.Int("len", 0, "output report length (default: from descriptor)")
 	fit := fs.String("fit", "cover", "cover | contain | stretch")
 	bg := fs.String("bg", "black", "background: black, white or RRGGBB")
@@ -188,7 +187,7 @@ func cmdUpload(args []string) error {
 func cmdBuiltin(args []string) error {
 	fs := flag.NewFlagSet("builtin", flag.ExitOnError)
 	yes := fs.Bool("yes", false, "send to the keyboard")
-	node := fs.String("node", "", "data interface (default: saved or legacy FF67 interface)")
+	node := fs.String("node", "", "data interface (default: detected from the layout)")
 	plen := fs.Int("len", 0, "output report length")
 	fs.Parse(args)
 	var idx int
@@ -213,7 +212,7 @@ func cmdBuiltin(args []string) error {
 func cmdTime(args []string) error {
 	fs := flag.NewFlagSet("time", flag.ExitOnError)
 	yes := fs.Bool("yes", false, "send to the keyboard")
-	node := fs.String("node", "", "command interface (default: saved or legacy config interface)")
+	node := fs.String("node", "", "command interface (default: detected legacy config interface)")
 	plen := fs.Int("len", 0, "output report length")
 	fs.Parse(args)
 	r, err := c.SetTime(core.Target{Node: *node, Len: *plen}, time.Now(), !*yes)

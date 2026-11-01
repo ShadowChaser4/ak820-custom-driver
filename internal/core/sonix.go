@@ -92,12 +92,9 @@ func (c *Core) sonixClock(ctl, dat hidraw.Info, now time.Time, dry bool) (*SendR
 	if err := p.SyncClock(now); err != nil {
 		return res, err
 	}
-	// The control channel accepted the whole sequence: this is our "confirmed" signal.
-	cf := c.Config()
-	cf.Cmd = Target{ctl.Node, 64}
-	if err := c.SaveConfig(cf); err != nil {
-		return res, err
-	}
+	// The control channel accepted the whole sequence: this is our "connected" signal
+	// (in memory only; it is re-tested every session).
+	c.MarkConnected(ctl.Node)
 	return res, nil
 }
 

@@ -104,17 +104,18 @@ Results are appended to `PROBE-LOG.md`. Flags:
 A reply starting with `55 10` means that node, at that report length, is the command channel.
 If nothing replies, include `PROBE-LOG.md` in your issue.
 
-### 3. Device info
+### 3. Device info (legacy layout only)
+
+The `sonix` layout has no device-info command. On those keyboards use `./ak820 time --yes` to connect instead.
 
 ```sh
 ./ak820 info                              # dry run
-./ak820 info --yes                        # legacy layout: picks the config interface itself
+./ak820 info --yes                        # legacy layout only: picks the config interface itself
 ./ak820 info --yes --node hidraw8 --len 64   # explicit: use what probe found
-./ak820 info --yes --node hidraw8 --save     # after a reply, remember it as the confirmed target
 ```
 
 `--len` defaults to the output report size in the descriptor.
-`--save` writes `~/.config/ak820/target.json`; later commands and the UI use it when no `--node` is given.
+Nothing about device nodes is ever saved to disk: `/dev/hidrawN` numbers change every time the keyboard is replugged, so the tool re-detects your keyboard on every run.
 
 ### 4. Upload an image or GIF
 
@@ -171,8 +172,7 @@ Everything technical (interface table, probe, report, interface pickers, built-i
 
 Nothing is written until you click a red-outlined button and confirm in the dialog, which shows the target node and the first packet's bytes.
 **Sending is locked until the keyboard is connected.** On a `sonix` keyboard, "connected" means the clock-sync command went through; on legacy it means `GET_DEVICE_INFO` got a reply.
-The connection is saved in `~/.config/ak820/target.json` and is ignored if the saved device node no longer exists (e.g. after replugging).
-The `info --save` and `time --yes` CLI commands do the same from the terminal.
+The connection only lasts for the running session (it is kept in memory, never on disk), so after restarting the UI, or replugging the keyboard, you click Connect again. That is deliberate: it re-tests the connection every time.
 
 Security: the server binds 127.0.0.1, requires the random token printed at startup on every API call (sent as the `X-Token` header), and rejects foreign `Host` / `Origin` headers, so other web pages cannot drive your keyboard.
 The token is in the URL fragment, which browsers do not send to the server.
@@ -181,7 +181,7 @@ The token is in the URL fragment, which browsers do not send to the server.
 
 - On a **legacy** 1.16 keyboard, never send feature report `04 72`: it erases the saved animation slot. (On `sonix` it is the normal image-setup step and the tool sends it for you.)
 - On `sonix`, an upload overwrites the animation stored in the keyboard's flash. Don't unplug the cable while the progress bar is moving.
-- Do not run `upload` with a `--node` and `--len` you have not confirmed with `probe` and `info` first.
+- Do not run `upload` with a `--node` and `--len` you have not checked with `probe` first (the defaults are detected for you and are safe).
   The CLI does not enforce this (the UI does), so check before adding `--yes`.
 
 ## Layout of the code
@@ -189,7 +189,7 @@ The token is in the URL fragment, which browsers do not send to the server.
 | Path | Contents |
 |---|---|
 | `cmd/ak820/` | CLI and subcommands (including `ui`) |
-| `internal/core/` | device logic shared by CLI and UI: discovery, probe, info, upload, builtin, clock, saved target |
+| `internal/core/` | device logic shared by CLI and UI: discovery, probe, info, upload, builtin, clock, in-memory session |
 | `internal/history/` | upload history on disk |
 | `internal/web/` | local web server and the embedded frontend (`static/`) |
 | `internal/hidraw/` | sysfs enumeration, HID report-descriptor parser, hidraw open, read and write, `GET_FEATURE` |

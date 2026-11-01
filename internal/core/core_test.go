@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"image"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -72,8 +73,7 @@ func newRig(t *testing.T) *rig {
 			r.opens++
 			return &fakeDev{node: i.Node, writes: &r.writes, feats: &r.feats, replies: r.reply}, nil
 		},
-		ConfigDir: t.TempDir(),
-		DataDir:   t.TempDir(),
+		DataDir: t.TempDir(),
 	}
 	return r
 }
@@ -149,31 +149,31 @@ func TestProbeRealSendsOneFramePerCandidateAndCollectsReplies(t *testing.T) {
 
 func TestInfoDryOpensNothingAndRealSavesTarget(t *testing.T) {
 	r := newRig(t)
-	if _, err := r.c.Info(Target{Node: "hidraw8"}, true, true); err != nil || r.opens != 0 {
+	if _, err := r.c.Info(Target{Node: "hidraw8"}, true); err != nil || r.opens != 0 {
 		t.Fatalf("dry: err %v opens %d", err, r.opens)
 	}
-	if r.c.Config().Cmd.Node != "" {
+	if r.c.State().Cmd.Node != "" {
 		t.Fatal("dry run must not save a target")
 	}
 	r.reply["/dev/hidraw8"] = [][]byte{infoReply()}
-	res, err := r.c.Info(Target{Node: "hidraw8"}, false, true)
+	res, err := r.c.Info(Target{Node: "hidraw8"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Info.Firmware != "1.16" || res.Info.PID != 0x800a {
 		t.Fatalf("%+v", res.Info)
 	}
-	if got := r.c.Config().Cmd; got.Node != "/dev/hidraw8" || got.Len != 64 {
+	if got := r.c.State().Cmd; got.Node != "/dev/hidraw8" {
 		t.Fatalf("saved %+v", got)
 	}
 }
 
 func TestInfoNoReplyDoesNotSave(t *testing.T) {
 	r := newRig(t)
-	if _, err := r.c.Info(Target{Node: "hidraw8"}, false, true); err == nil {
+	if _, err := r.c.Info(Target{Node: "hidraw8"}, false); err == nil {
 		t.Fatal("expected timeout")
 	}
-	if r.c.Config().Cmd.Node != "" {
+	if r.c.State().Cmd.Node != "" {
 		t.Fatal("must not save an unconfirmed target")
 	}
 }
@@ -205,7 +205,7 @@ func TestClockDryDoesNothingAndRealConfirmsTarget(t *testing.T) {
 	if err != nil || r.opens != 0 || len(r.feats) != 0 || len(res.Steps) != 4 {
 		t.Fatalf("dry: %v opens %d feats %d steps %d", err, r.opens, len(r.feats), len(res.Steps))
 	}
-	if r.c.Config().Cmd.Node != "" {
+	if r.c.State().Cmd.Node != "" {
 		t.Fatal("dry run must not confirm anything")
 	}
 	if _, err := r.c.SetTime(Target{}, now, false); err != nil {
@@ -214,7 +214,7 @@ func TestClockDryDoesNothingAndRealConfirmsTarget(t *testing.T) {
 	if len(r.feats) != 4 {
 		t.Fatalf("expected 4 control frames, got %d", len(r.feats))
 	}
-	if got := r.c.Config().Cmd; got.Node != "/dev/hidraw8" {
+	if got := r.c.State().Cmd; got.Node != "/dev/hidraw8" {
 		t.Fatalf("saved %+v", got)
 	}
 	all, _ := r.c.Devices()
@@ -225,7 +225,7 @@ func TestClockDryDoesNothingAndRealConfirmsTarget(t *testing.T) {
 
 func TestReadyRequiresTheSavedNodeToStillExist(t *testing.T) {
 	r := newRig(t)
-	_ = r.c.SaveConfig(Config{Cmd: Target{"/dev/hidraw42", 64}})
+	r.c.MarkConnected("/dev/hidraw42")
 	all, _ := r.c.Devices()
 	if r.c.Ready(all) {
 		t.Fatal("stale node must not count as ready")
@@ -253,5 +253,87 @@ func TestDescribeIsPlainLanguage(t *testing.T) {
 	}
 	if f := r.c.Describe(realUnit()[:2], nil); f.Level == "ok" {
 		t.Errorf("unsupported layout must not look connected: %+v", f)
+	}
+}
+
+// renumber returns a copy of the unit with hidraw nodes renamed, as happens on replug.
+func renumber(all []hidraw.Info, m map[string]string) []hidraw.Info {
+	out := append([]hidraw.Info(nil), all...)
+	for i := range out {
+		if n, ok := m[out[i].Node]; ok {
+			out[i].Node = n
+		}
+	}
+	return out
+}
+
+// Regression: the keyboard came back as hidraw3-6 after a replug and the tool
+// failed with "/dev/hidraw8 is not a 0c45 hidraw node". Nothing about nodes is
+// stored any more, so every run resolves from the current enumeration.
+func TestResolveSurvivesRenumberingWithNoSavedState(t *testing.T) {
+	r := newRig(t)
+	all, _ := r.c.Devices()
+	if i, _, err := r.c.Resolve(all, "cmd", Target{}); err != nil || i.Node != "/dev/hidraw8" {
+		t.Fatalf("before: %v %s", err, i.Node)
+	}
+	m := map[string]string{"/dev/hidraw5": "/dev/hidraw3", "/dev/hidraw7": "/dev/hidraw5", "/dev/hidraw8": "/dev/hidraw6"}
+	r.c.Enumerate = func() ([]hidraw.Info, error) { return renumber(realUnit(), m), nil }
+	all, _ = r.c.Devices()
+	i, n, err := r.c.Resolve(all, "cmd", Target{})
+	if err != nil || i.Node != "/dev/hidraw6" || n != 64 {
+		t.Fatalf("cmd after replug: %v %s %d", err, i.Node, n)
+	}
+	i, n, err = r.c.Resolve(all, "data", Target{})
+	if err != nil || i.Node != "/dev/hidraw5" || n != 4096 {
+		t.Fatalf("data after replug: %v %s %d", err, i.Node, n)
+	}
+	if _, _, err := r.c.Resolve(all, "cmd", Target{Node: "hidraw8"}); err == nil {
+		t.Fatal("an explicit node that no longer exists must still be an error")
+	}
+}
+
+func TestNothingAboutNodesIsEverWrittenToDisk(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.c.SetTime(Target{}, time.Now(), false); err != nil {
+		t.Fatal(err)
+	}
+	r.c.SetDataNode("/dev/hidraw7")
+	entries, _ := os.ReadDir(r.c.DataDir)
+	if len(entries) != 0 {
+		t.Fatalf("DataDir should stay empty, found %v", entries)
+	}
+}
+
+func TestSessionIsNotSharedBetweenProcesses(t *testing.T) {
+	a, b := newRig(t), newRig(t)
+	if _, err := a.c.SetTime(Target{}, time.Now(), false); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := a.c.Devices()
+	if !a.c.Ready(all) || b.c.Ready(all) {
+		t.Fatal("a fresh Core (a new run) must start disconnected")
+	}
+}
+
+func TestReadyGoesFalseWhenTheKeyboardIsReplugged(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.c.SetTime(Target{}, time.Now(), false); err != nil {
+		t.Fatal(err)
+	}
+	all, _ := r.c.Devices()
+	if !r.c.Ready(all) {
+		t.Fatal("should be ready after connecting")
+	}
+	m := map[string]string{"/dev/hidraw8": "/dev/hidraw6"}
+	if r.c.Ready(renumber(all, m)) {
+		t.Fatal("the connected node vanished: must require connecting again")
+	}
+}
+
+func TestInfoOnSonixExplainsWhatToRunInstead(t *testing.T) {
+	r := newRig(t)
+	_, err := r.c.Info(Target{}, false)
+	if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), "time --yes") || r.opens != 0 {
+		t.Fatalf("%v opens %d", err, r.opens)
 	}
 }

@@ -171,7 +171,7 @@ func dto(i hidraw.Info) ifaceDTO {
 
 func (s *Server) devices(w http.ResponseWriter, r *http.Request) {
 	all, err := s.Core.Devices()
-	resp := map[string]any{"config": s.Core.Config(), "friendly": s.Core.Describe(all, err)}
+	resp := map[string]any{"config": s.Core.State(), "friendly": s.Core.Describe(all, err)}
 	if err != nil {
 		resp["error"] = err.Error()
 		resp["ready"], resp["profile"], resp["layout"] = false, "unknown", "unknown"
@@ -221,13 +221,12 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 		Dry  bool   `json:"dry"`
 		Node string `json:"node"`
 		Len  int    `json:"len"`
-		Save bool   `json:"save"`
 	}
 	if err := readJSON(r, &q); err != nil {
 		fail(w, 400, err)
 		return
 	}
-	res, err := s.Core.Info(core.Target{Node: q.Node, Len: q.Len}, q.Dry, q.Save)
+	res, err := s.Core.Info(core.Target{Node: q.Node, Len: q.Len}, q.Dry)
 	if err != nil {
 		fail(w, 502, err)
 		return
@@ -235,7 +234,7 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, res)
 }
 
-// target sets the upload (data) interface. No device I/O.
+// target sets the upload (data) interface for this session only. No device I/O.
 func (s *Server) target(w http.ResponseWriter, r *http.Request) {
 	var q core.Target
 	if err := readJSON(r, &q); err != nil {
@@ -250,13 +249,8 @@ func (s *Server) target(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err)
 		return
 	}
-	cf := s.Core.Config()
-	cf.Data = q
-	if err := s.Core.SaveConfig(cf); err != nil {
-		fail(w, 500, err)
-		return
-	}
-	writeJSON(w, cf)
+	s.Core.SetDataNode(q.Node)
+	writeJSON(w, s.Core.State())
 }
 
 // ---- preview / upload -----------------------------------------------------------

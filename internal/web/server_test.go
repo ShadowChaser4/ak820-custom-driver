@@ -31,18 +31,24 @@ func rig(t *testing.T, confirmed bool) (*httptest.Server, *Server, *int, *int) {
 	var writes, opens int
 	c := &core.Core{
 		Enumerate: func() ([]hidraw.Info, error) {
-			raw := []byte{0x06, 0x13, 0xff, 0x09, 0x01, 0xa1, 0x01, 0x15, 0x00, 0x26, 0xff, 0x00, 0x75, 0x08, 0x95, 0x40,
+			// the two vendor interfaces of a real 0c45:800a unit (captured descriptors)
+			ff68 := []byte{0x06, 0x68, 0xff, 0x09, 0x61, 0xa1, 0x01, 0x09, 0x62, 0x15, 0x00, 0x26, 0xff, 0x00, 0x95, 0x40,
+				0x75, 0x08, 0x81, 0x02, 0x09, 0x63, 0x15, 0x00, 0x26, 0xff, 0x00, 0x96, 0x00, 0x10, 0x75, 0x08, 0x91, 0x02, 0xc0}
+			ff13 := []byte{0x06, 0x13, 0xff, 0x09, 0x01, 0xa1, 0x01, 0x15, 0x00, 0x26, 0xff, 0x00, 0x75, 0x08, 0x95, 0x40,
 				0x09, 0x02, 0x81, 0x02, 0x09, 0x03, 0x91, 0x02, 0x0a, 0x00, 0xff, 0xb1, 0x02, 0xc0}
-			return []hidraw.Info{{Node: "/dev/hidraw8", VID: 0x0c45, PID: 0x800a, Raw: raw, D: hidraw.ParseDescriptor(raw)}}, nil
+			mk := func(node string, iface int, raw []byte) hidraw.Info {
+				return hidraw.Info{Node: node, VID: 0x0c45, PID: 0x800a, Iface: iface, Raw: raw, D: hidraw.ParseDescriptor(raw)}
+			}
+			return []hidraw.Info{mk("/dev/hidraw7", 2, ff68), mk("/dev/hidraw8", 3, ff13)}, nil
 		},
 		OpenDev: func(hidraw.Info) (core.DevIO, error) {
 			opens++
 			return dev{&writes, &opens}, nil
 		},
-		ConfigDir: t.TempDir(), DataDir: t.TempDir(),
+		DataDir: t.TempDir(),
 	}
 	if confirmed {
-		_ = c.SaveConfig(core.Config{Cmd: core.Target{Node: "/dev/hidraw8", Len: 64}})
+		c.MarkConnected("/dev/hidraw8")
 	}
 	s := &Server{Core: c, Token: "tok", AllowedHosts: []string{host}}
 	ts := httptest.NewServer(s.Handler())
@@ -131,8 +137,12 @@ func TestDryEndpointsNeverWrite(t *testing.T) {
 		"/api/time":    `{"dry":true}`,
 	}
 	for p, b := range calls {
-		if r := do(t, ts, "POST", p, []byte(b), map[string]string{"Content-Type": "application/json"}); r.StatusCode != 200 {
-			t.Errorf("%s dry: %d", p, r.StatusCode)
+		want := 200
+		if p == "/api/builtin" {
+			want = http.StatusNotImplemented // sonix has no built-in animations
+		}
+		if r := do(t, ts, "POST", p, []byte(b), map[string]string{"Content-Type": "application/json"}); r.StatusCode != want {
+			t.Errorf("%s dry: %d, want %d", p, r.StatusCode, want)
 		}
 	}
 	if *writes != 0 || *opens != 0 {
