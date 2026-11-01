@@ -12,6 +12,7 @@ import (
 //go:embed gifs/*.gif gifs/LICENSE-ak820pro-linux.txt
 var files embed.FS
 
+// Item describes one ready-made animation.
 type Item struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`

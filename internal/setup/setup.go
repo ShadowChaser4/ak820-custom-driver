@@ -24,12 +24,14 @@ func InstallCommand(prog string) string {
 	return prog + " setup --print-rule | sudo tee /etc/udev/rules.d/70-ak820.rules >/dev/null && sudo udevadm control --reload && sudo udevadm trigger"
 }
 
+// Item is one line of the checklist.
 type Item struct {
 	OK    bool
 	Title string
 	Fix   string // what to do, when !OK
 }
 
+// Input is what Check needs to know about this machine.
 type Input struct {
 	Found      int    // interfaces found for the chosen keyboard
 	Name       string // e.g. "AK820 0c45:800a"

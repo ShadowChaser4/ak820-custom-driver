@@ -15,6 +15,7 @@ Some firmware revisions expose different interfaces from the ones other tools ex
    ```sh
    make install        # builds and installs to ~/.local/bin/ak820 (no sudo needed)
    ```
+   Once the repository is published, `go install github.com/ShadowChaser4/ak820-custom-driver/cmd/ak820@latest` will also work.
    Make sure `~/.local/bin` is on your `PATH` (`make install` tells you if it is not). If you just unpacked the archive, run it as `./ak820`; every hint the program prints uses the name you typed.
 2. **Check this computer.** Plug the keyboard in with the USB-C cable, slide the switch on the back to **USB**, then:
    ```sh
@@ -191,26 +192,30 @@ The token is in the URL fragment, which browsers do not send to the server.
 
 | Path | Contents |
 |---|---|
-| `cmd/ak820/` | CLI and subcommands (including `ui`) |
-| `internal/core/` | device logic shared by CLI and UI: discovery, probe, info, upload, builtin, clock, in-memory session |
+| `cmd/ak820/` | the command: `main.go`, `commands.go`, `ui.go`, and `errors.go`, the only place the CLI words its errors |
+| `internal/hidraw/` | finds hidraw nodes through sysfs, parses HID descriptors, raw report I/O (Linux only; other systems get a clear error) |
+| `internal/keyboard/` | finds the keyboard; defines `Driver` and `Plan`, and the shared errors |
+| `internal/keyboard/sonix/` | driver for the feature-report protocol: clock, flash payload, alignment, chunked upload |
+| `internal/keyboard/legacy/` | driver for the `AA`/`55` protocol, and the probe |
+| `internal/keyboard/drivers/` | the list of protocols; add new ones here |
+| `internal/animation/` | image and GIF decoding, 128×128 fit, RGB565 |
 | `internal/history/` | upload history on disk |
-| `internal/web/` | local web server and the embedded frontend (`static/`) |
-| `internal/hidraw/` | sysfs enumeration, HID report-descriptor parser, hidraw open, read and write, `GET_FEATURE` |
-| `internal/proto/` | legacy `AA`/`55` packet framing, reply matching, upload, `GET_DEVICE_INFO` decoding |
-| `internal/sonix/` | feature-report protocol: clock sync, flash payload, alignment and chunked upload with per-chunk acknowledgement |
 | `internal/gallery/` | the embedded ready-made GIFs and their licence |
-| `internal/img/` | image and GIF decoding, 128×128 fit, RGB565, payload builder and parser |
 | `internal/setup/` | the `setup` checklist and the embedded udev rule |
+| `internal/web/` | local web server, its status wording, and the embedded page (`static/`) |
 | `internal/hw/` | opt-in tests that use a real keyboard (`-tags hardware`) |
 | `udev/70-ak820.rules` | permissions rule (kept identical to the embedded copy by a test) |
-| `docs/` | hardware test results, UI checklist |
+| `docs/` | architecture, hardware test results, UI checklist |
 
-Run the tests with `go test ./...`. They include the real descriptors captured from a 0c45:800a unit.
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains the design and how to add a keyboard protocol.
+
+Run the tests with `make check`. They include the real descriptors captured from a 0c45:800a unit.
 
 ## Testing
 
 ```sh
-make check          # gofmt + go vet + all tests with the race detector (what CI runs)
+make check          # gofmt + go vet + all tests with the race detector
+make lint           # golangci-lint, fetched on demand (CI runs this too)
 make fuzz           # 10 s on each fuzz target (descriptor parser, payload parser, image decoder)
 ```
 
@@ -218,7 +223,9 @@ What the tests cover, and how they avoid needing a keyboard:
 
 - **No saved device numbers.** Enumeration is tested against fake sysfs trees (the real four-interface unit, the same unit after a replug with different `hidrawN` numbers, two keyboards, other vendors, broken nodes).
 - **Nothing is written without `--yes`.** Every CLI command is run against a fake keyboard that counts writes.
-- **The `sonix` protocol** is checked byte-for-byte against golden files and against a stateful fake of the firmware (the 64-packet ring counter that `IMAGE_CFG` does not reset, ACK on wrap, the 2 s watchdog). Uploads are checked from all 64 starting positions, and every failure (dropped or corrupt ACK, write error, dead control channel) must never be followed by a SAVE.
+- **The `sonix` protocol** is checked byte-for-byte against golden files and against a stateful fake of the firmware (the 64-packet ring counter that `IMAGE_CFG` does not reset, ACK on wrap, the 2 s watchdog), running in virtual time with `testing/synctest`. Uploads are checked from all 64 starting positions, and every failure (dropped or corrupt ACK, write error, unplug, cancel, timeout) must never be followed by a SAVE.
+- **Every driver** passes the same conformance test, and what a dry run shows is checked against what is really sent.
+- **Output that people rely on** (the JSON API and CLI text) is held in golden files, so a refactor cannot change it by accident.
 - **The web page** is checked for consistency (every element the script uses exists, every API path it calls is routed, no external resources, no HTML injection); the API for token, `Host`/`Origin`, path traversal and size limits.
 - **Fuzzing** found and fixed a descriptor-parsing overflow; the failing input is kept as a regression seed. Pictures that claim a huge size are rejected before decoding.
 - **Real hardware** is opt-in and read-only by default: `go test -tags hardware -v ./internal/hw`. Writes need `AK820_HW_WRITE=1` (clock) or `AK820_HW_UPLOAD=1` (picture). See [docs/HARDWARE-TESTS.md](docs/HARDWARE-TESTS.md), which also lists what has been verified on real keyboards. Things automation cannot see (phone layout, light mode, keyboard-only use) are in [docs/UI-CHECKLIST.md](docs/UI-CHECKLIST.md).
