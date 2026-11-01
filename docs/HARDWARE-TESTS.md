@@ -18,16 +18,26 @@ The write tests cannot know whether the screen changed. **Look at the keyboard**
 
 | Layout | Product | Firmware | Date | Tester | Read-only checks | Clock sync | Picture upload | Survives replug |
 |---|---|---|---|---|---|---|---|---|
-| sonix (`FF68` 4096 B + `FF13` 64 B feature) | AK820 Pro `0c45:800a` | not read | 2026-11-01 | project author | pass (4 interfaces, layout `sonix`, `GET_FEATURE` readable) | command accepted, **screen change not confirmed** | **not run** | not run |
+| sonix (`FF68` 4096 B + `FF13` 64 B feature) | AK820 Pro `0c45:800a` | USB revision 1.10 (`bcdDevice`) | 2026-11-01 | project author | pass (4 interfaces, layout `sonix`, `GET_FEATURE` readable) | pass, screen shows the right time | pass, default format | pass, opened with **Fn+Del** |
 | legacy (`FF67` + config page) | | | | | not run | not run | not run | not run |
 
 "Command accepted" means every control frame was sent without an I/O error. It is not proof that the
 keyboard did what was asked.
 
+After a replug this keyboard plays the boot animation and then shows the clock. The picture is not shown
+until you press Fn+Del, so check with Fn+Del before recording a picture as lost.
+
+The replug test unplugged and replugged the USB cable. A longer time without power has not been tested.
+
+The keyboard failed to connect on a USB hub shared with three other devices (`Not enough bandwidth`,
+`can't set config #1, error -28`). It connected on a port on the laptop itself.
+
 ## Known open questions
 
 - The reference notes for the `sonix` clock sequence disagree with the reference code about byte 8 of the
   final SAVE frame (`01` in the notes, `00` in the code) and mention a `FINISH` frame (`04 F0`) that the
-  code does not send. This tool follows the code. If the clock does not change on your keyboard, those two
-  details are the first things to try.
-- Picture upload has only run against a fake of the firmware.
+  code does not send. This tool follows the code, and that works on the keyboard above. If the clock does
+  not change on your keyboard, those two details are the first things to try.
+- Whether a command can make the picture open by itself at startup.
+- Other projects disagree about the upload's slot byte (1, 2 or 3). This tool sends 3, which worked on the
+  keyboard above. A report that it only shows briefly on another `0c45:800a` suggests trying slot 1 there.

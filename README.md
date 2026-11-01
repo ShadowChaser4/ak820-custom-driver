@@ -26,8 +26,9 @@ Some firmware revisions expose different interfaces from the ones other tools ex
    ```sh
    ak820               # opens the app in your browser: connect, pick a picture, send
    ```
+4. **See your picture after a restart.** When the keyboard starts up it shows its boot animation and then the clock, not your picture. The picture is still saved: press **Fn+Del** to open it, and **Fn+Del** again to go back to the clock.
 
-If anything goes wrong, run `ak820 setup`. If your keyboard is "not supported yet", run `ak820 report --issue` and paste the result into a new issue; that is all that is needed to add support.
+If anything goes wrong, run `ak820 setup`. If it says the keyboard isn't found while the keyboard is plugged in and lighting up, try a USB port on the computer itself instead of a hub. A busy hub can run out of bandwidth, and `dmesg` then shows `Not enough bandwidth` and `can't set config #1, error -28`. If your keyboard is "not supported yet", run `ak820 report --issue` and paste the result into a new issue; that is all that is needed to add support.
 
 Several keyboards plugged in? Choose one with `ak820 --device 2 <command>` (or `AK820_DEVICE=2`).
 
@@ -35,13 +36,13 @@ Several keyboards plugged in? Choose one with `ak820 --device 2 <command>` (or `
 
 | Layout | Protocol | Status |
 |---|---|---|
-| **`sonix`**: `FF68` (4096-byte output report) + `FF13` (64-byte feature report). This is the AK820 Pro 0c45:800a that this project was developed on. | Feature-report commands plus 4096-byte data chunks (from [ak820pro-linux](https://github.com/ErvinUrban-Bratislava/ak820pro-linux) firmware notes) | Implemented and tested against fakes. On real hardware only the **clock sync** has been run so far (the command succeeded; the screen's clock has not been confirmed). **Image upload has not been run on hardware yet.** |
+| **`sonix`**: `FF68` (4096-byte output report) + `FF13` (64-byte feature report). This is the AK820 Pro 0c45:800a that this project was developed on. | Feature-report commands plus 4096-byte data chunks (from [ak820pro-linux](https://github.com/ErvinUrban-Bratislava/ak820pro-linux) firmware notes) | Tested on one real keyboard (USB revision 1.10): the clock sync sets the right time, and uploaded pictures display and are still there after a replug. See [the results](docs/HARDWARE-TESTS.md). |
 | **`legacy`**: a config page plus a bulk page `FF67`, as in [fromagge/ak820-screen](https://github.com/fromagge/ak820-screen) | `AA`/`55` framed commands | Implemented, **not tested on hardware** here |
 | anything else | n/a | The tool refuses to guess and says so |
 
 The layout is detected from the HID report descriptors; run `./ak820 list` to see yours.
 
-`sonix` uploads are written to the keyboard's flash, so they stay after unplugging. Legacy firmware 1.16 keeps uploads in RAM only.
+`sonix` uploads are still on the keyboard after unplugging, but startup shows the clock, so press **Fn+Del** to open the picture. Legacy firmware 1.16 keeps uploads in RAM only.
 `sonix` has no built-in-animation command in this tool, so `builtin` is only available on the legacy layout.
 
 ## Requirements
@@ -145,6 +146,8 @@ The screen is 128×128. Images are converted to RGB565 and sent in an animation 
 
 Supported inputs: PNG, JPEG, GIF (animated GIFs keep their frame delays).
 
+After a restart the keyboard shows the clock. Press **Fn+Del** to open the uploaded picture, and again to return to the clock (`sonix` layout).
+
 A real upload is also stored in the history (`~/.local/share/ak820/history`, newest 50), which the UI can restore or export as a GIF.
 
 The screen redraws at about 60 ms per frame at best, so shorter delays play at that rate.
@@ -157,6 +160,8 @@ On firmware 1.16 an uploaded animation is held in RAM. It is lost when you unplu
 ./ak820 builtin --yes 3
 ./ak820 time --yes        # sync the screen clock (command interface)
 ```
+
+If the screen is on the clock after a sync, press **Fn+Del** to get back to your picture. Connecting in the web UI also syncs the clock.
 
 ### 6. Web UI (for everyone, no terminal knowledge needed)
 
@@ -184,7 +189,7 @@ The token is in the URL fragment, which browsers do not send to the server.
 ## Things not to do
 
 - On a **legacy** 1.16 keyboard, never send feature report `04 72`: it erases the saved animation slot. (On `sonix` it is the normal image-setup step and the tool sends it for you.)
-- On `sonix`, an upload overwrites the animation stored in the keyboard's flash. Don't unplug the cable while the progress bar is moving.
+- On `sonix`, an upload replaces the picture stored on the keyboard. The Ajazz boot animation is not affected. Don't unplug the cable while the progress bar is moving.
 - Do not run `upload` with a `--node` and `--len` you have not checked with `probe` first (the defaults are detected for you and are safe).
   The CLI does not enforce this (the UI does), so check before adding `--yes`.
 
