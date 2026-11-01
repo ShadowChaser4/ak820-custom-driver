@@ -1,0 +1,6 @@
+stdout:
+1 frame(s), 33024 bytes, 9 packets of 4096 B to hidraw5
+dry run: first packet: 01 64 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+(this keyboard saves the picture in its flash memory; it stays after unplugging)
+nothing was sent. Add --yes to send it.
+stderr:

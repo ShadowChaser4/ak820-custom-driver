@@ -1,0 +1,6 @@
+stdout:
+stderr:
+No AK820 keyboard found.
+  Plug it in with the USB-C cable and slide the switch on the back to USB.
+  (Bluetooth and the 2.4G dongle cannot control the screen.)
+  Run `ak820 setup` to check this computer.

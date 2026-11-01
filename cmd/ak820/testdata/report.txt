@@ -1,0 +1,10 @@
+stdout:
+| node | iface | VID:PID | name | usage page | in B | out B | feature B | report IDs | rw |
+|---|---|---|---|---|---|---|---|---|---|
+| hidraw5 | 2 | 0c45:800a | SONiX AK820 | 0xFF68 | 64 | 4096 | 0 | false | true |
+| hidraw6 | 3 | 0c45:800a | SONiX AK820 | 0xFF13 | 64 | 64 | 64 | false | true |
+
+Descriptors:
+- `hidraw5` (24 B): `06 68 ff 09 01 a1 01 15 00 26 ff 00 75 08 95 40 81 02 96 00 10 91 02 c0`
+- `hidraw6` (27 B): `06 13 ff 09 01 a1 01 15 00 26 ff 00 75 08 95 40 81 02 95 40 91 02 95 40 b1 02 c0`
+stderr:

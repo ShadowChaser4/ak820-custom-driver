@@ -1,0 +1,3 @@
+stdout:
+stderr:
+this keyboard does not support that: this keyboard has no device-info command. Run `ak820 time --yes` to connect and set the clock instead

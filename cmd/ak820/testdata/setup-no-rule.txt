@@ -1,0 +1,12 @@
+stdout:
+ak820 setup
+
+ ✓ Keyboard found (AK820 0c45:800a, 2 interfaces)
+ ✗ Permission rule installed
+     Run this once, then unplug and replug the keyboard:
+         ak820 setup --print-rule | sudo tee /etc/udev/rules.d/70-ak820.rules >/dev/null && sudo udevadm control --reload && sudo udevadm trigger
+ ✓ This user is allowed to use the keyboard
+ ✓ Keyboard layout recognised (sonix)
+
+Fix the items marked ✗, then run `ak820 setup` again.
+stderr:

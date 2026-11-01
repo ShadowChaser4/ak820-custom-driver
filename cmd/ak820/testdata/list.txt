@@ -1,0 +1,4 @@
+stdout:
+hidraw5  if2  0c45:800a  page 0xFF68  in   64  out 4096  feat   0  rw=true  SONiX AK820
+hidraw6  if3  0c45:800a  page 0xFF13  in   64  out   64  feat  64  rw=true  SONiX AK820
+stderr:

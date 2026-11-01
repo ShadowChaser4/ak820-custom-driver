@@ -1,0 +1,11 @@
+stdout:
+ak820 setup
+
+ ✗ Keyboard found
+     Plug the keyboard in with the USB-C cable and slide the switch on the back to USB. Bluetooth and the 2.4G dongle cannot control the screen.
+ ✗ Permission rule installed
+     Run this once, then unplug and replug the keyboard:
+         ak820 setup --print-rule | sudo tee /etc/udev/rules.d/70-ak820.rules >/dev/null && sudo udevadm control --reload && sudo udevadm trigger
+
+Fix the items marked ✗, then run `ak820 setup` again.
+stderr:

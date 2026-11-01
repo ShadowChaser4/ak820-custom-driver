@@ -1,0 +1,26 @@
+[
+  {
+    "description": "A glowing core that pulses and spins.",
+    "frames": 16,
+    "id": "\u003cid\u003e",
+    "name": "AI Core"
+  },
+  {
+    "description": "Bouncing sound bars.",
+    "frames": 12,
+    "id": "\u003cid\u003e",
+    "name": "Audio Visualizer"
+  },
+  {
+    "description": "A cat drumming along.",
+    "frames": 4,
+    "id": "\u003cid\u003e",
+    "name": "Bongo Cat"
+  },
+  {
+    "description": "A sweeping radar screen.",
+    "frames": 12,
+    "id": "\u003cid\u003e",
+    "name": "Cyber Radar"
+  }
+]

@@ -1,0 +1,3 @@
+stdout:
+stderr:
+this keyboard does not support that: built-in animations are not available on this keyboard

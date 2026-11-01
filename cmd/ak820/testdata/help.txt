@@ -1,0 +1,17 @@
+stdout:
+ak820 — change the picture on the AK820 Pro keyboard screen
+
+  ak820              start the app in your browser (same as "ak820 ui")
+  ak820 setup        check that this computer is ready, and say how to fix it if not
+  ak820 list         show the keyboard's connections (no device I/O)
+  ak820 report       same, as a table;  "report --issue" is a paste-ready bug report
+  ak820 time         connect and set the keyboard clock (needs --yes)
+  ak820 upload FILE  send a PNG, JPEG or GIF to the screen (needs --yes)
+  ak820 builtin N    pick a built-in animation, older keyboards only (needs --yes)
+  ak820 probe        send a harmless test message to every connection (needs --yes)
+  ak820 info         read device info, older keyboards only (needs --yes)
+  ak820 version
+
+Anything that writes to the keyboard only prints what it WOULD send until you add --yes.
+Several keyboards plugged in?  ak820 --device 2 <command>   (or set AK820_DEVICE=2)
+stderr:

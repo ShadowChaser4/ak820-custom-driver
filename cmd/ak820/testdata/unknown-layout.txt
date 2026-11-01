@@ -1,0 +1,4 @@
+stdout:
+stderr:
+Your keyboard was found, but it talks in a way ak820 does not know yet.
+  Run `ak820 report --issue` and paste the result into a new issue so support can be added.

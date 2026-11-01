@@ -1,0 +1,3 @@
+stdout:
+stderr:
+error: unknown fit "zoom" (use cover, contain or stretch)
