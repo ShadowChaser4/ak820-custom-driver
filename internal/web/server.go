@@ -540,10 +540,9 @@ func (s *Server) setTime(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err)
 		return
 	}
-	if !q.Dry && !s.confirmed() {
-		needConfirmed(w)
-		return
-	}
+	// No "connected" check here: setting the clock IS the connect step (it tests the
+	// control channel and marks the keyboard connected). Gating it would make the
+	// Connect button impossible to succeed.
 	res, err := s.Core.SetTime(core.Target{}, time.Now(), q.Dry)
 	if err != nil {
 		fail(w, 502, err)

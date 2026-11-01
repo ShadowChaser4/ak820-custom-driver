@@ -150,18 +150,56 @@ func TestDryEndpointsNeverWrite(t *testing.T) {
 	}
 }
 
-func TestRealWritesRefusedUntilTargetConfirmed(t *testing.T) {
+// Everything that changes the screen is refused until the keyboard is connected...
+func TestRealWritesRefusedUntilConnected(t *testing.T) {
 	ts, _, writes, opens := rig(t, false)
 	for _, c := range []struct{ p, b string }{
-		{"/api/builtin", `{"index":1}`}, {"/api/time", `{}`}, {"/api/history/restore", `{"id":"x"}`},
+		{"/api/builtin", `{"index":1}`}, {"/api/history/restore", `{"id":"x"}`}, {"/api/upload", `{"previewId":"x"}`},
 	} {
 		r := do(t, ts, "POST", c.p, []byte(c.b), nil)
 		if r.StatusCode == 200 {
-			t.Errorf("%s accepted a real write with no confirmed target", c.p)
+			t.Errorf("%s accepted a real write before connecting", c.p)
 		}
 	}
 	if *writes != 0 || *opens != 0 {
 		t.Fatalf("opened %d wrote %d", *opens, *writes)
+	}
+}
+
+// ...but the Connect button (which sets the clock) must itself be allowed. Regression: it was
+// gated by "connected", so it could never succeed ("the keyboard is not connected yet").
+func TestConnectButtonWorksFromAFreshStart(t *testing.T) {
+	ts, _, writes, _ := rig(t, false)
+	devices := func() bool {
+		r := do(t, ts, "GET", "/api/devices", nil, nil)
+		var d struct{ Ready bool }
+		json.NewDecoder(r.Body).Decode(&d)
+		return d.Ready
+	}
+	if devices() {
+		t.Fatal("a fresh start must not be connected")
+	}
+	// what the page does: dry run, then the real call
+	if r := do(t, ts, "POST", "/api/time", []byte(`{"dry":true}`), map[string]string{"Content-Type": "application/json"}); r.StatusCode != 200 {
+		t.Fatalf("dry: %d", r.StatusCode)
+	}
+	if *writes != 0 {
+		t.Fatal("dry run wrote to the keyboard")
+	}
+	r := do(t, ts, "POST", "/api/time", []byte(`{"dry":false}`), map[string]string{"Content-Type": "application/json"})
+	if r.StatusCode != 200 {
+		t.Fatalf("the Connect button was refused with %d", r.StatusCode)
+	}
+	if *writes != 4 {
+		t.Errorf("expected the 4 clock frames, got %d writes", *writes)
+	}
+	if !devices() {
+		t.Fatal("still not ready after the Connect button succeeded")
+	}
+	// now the gate is open: a write that used to be refused with 409 gets as far as its own validation
+	r = do(t, ts, "POST", "/api/history/restore", []byte(`{"id":"nope"}`), map[string]string{"Content-Type": "application/json"})
+	if r.StatusCode == http.StatusConflict {
+		t.Error("still refused as 'not connected' after connecting")
 	}
 }
 

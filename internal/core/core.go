@@ -590,8 +590,11 @@ func (c *Core) SetTime(t Target, now time.Time, dry bool) (*SendResult, error) {
 	}
 	defer d.Close()
 	p := &proto.Port{C: d, Len: n, Timeout: 500 * time.Millisecond, Retries: 3}
-	_, err = p.Command(proto.CmdTemp, data, 24)
-	return res, err
+	if _, err = p.Command(proto.CmdTemp, data, 24); err != nil {
+		return res, err
+	}
+	c.MarkConnected(i.Node) // the keyboard answered the clock command
+	return res, nil
 }
 
 // ---- report ------------------------------------------------------------------
