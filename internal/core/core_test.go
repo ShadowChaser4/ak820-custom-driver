@@ -337,3 +337,55 @@ func TestInfoOnSonixExplainsWhatToRunInstead(t *testing.T) {
 		t.Fatalf("%v opens %d", err, r.opens)
 	}
 }
+
+func withDevice(all []hidraw.Info, key string, pid uint16) []hidraw.Info {
+	out := append([]hidraw.Info(nil), all...)
+	for i := range out {
+		out[i].Device, out[i].PID = key, pid
+		out[i].Node += "-" + key
+	}
+	return out
+}
+
+func TestTwoKeyboardsRequireAChoice(t *testing.T) {
+	r := newRig(t)
+	two := append(withDevice(realUnit(), "1-1", 0x800A), withDevice(realUnit(), "1-2", 0x800A)...)
+	r.c.Enumerate = func() ([]hidraw.Info, error) { return two, nil }
+	_, err := r.c.Devices()
+	var em ErrMultiple
+	if !errors.As(err, &em) || em.N != 2 || !strings.Contains(err.Error(), "--device") {
+		t.Fatalf("%v", err)
+	}
+	r.c.Device = 2
+	all, err := r.c.Devices()
+	if err != nil || len(all) != 3 || all[0].Device != "1-2" {
+		t.Fatalf("--device 2: %v %d %q", err, len(all), all[0].Device)
+	}
+	r.c.Device = 3
+	if _, err := r.c.Devices(); err == nil {
+		t.Fatal("--device 3 with two keyboards must fail")
+	}
+}
+
+func TestOtherProductsAndTheDongleAreIgnored(t *testing.T) {
+	r := newRig(t)
+	mixed := append(withDevice(realUnit(), "1-1", 0x800A), withDevice(realUnit(), "1-4", 0xFEFE)...) // 2.4G dongle
+	mixed = append(mixed, withDevice(realUnit(), "1-5", 0x1234)...)                                  // unrelated 0c45 device
+	r.c.Enumerate = func() ([]hidraw.Info, error) { return mixed, nil }
+	all, err := r.c.Devices()
+	if err != nil || len(all) != 3 || all[0].Device != "1-1" {
+		t.Fatalf("%v %d", err, len(all))
+	}
+	r.c.Enumerate = func() ([]hidraw.Info, error) { return withDevice(realUnit(), "1-4", 0xFEFE), nil }
+	if _, err := r.c.Devices(); !errors.Is(err, ErrNoDevice) {
+		t.Fatalf("only a dongle: want ErrNoDevice, got %v", err)
+	}
+}
+
+func TestOlderAK820ProductIsSupported(t *testing.T) {
+	r := newRig(t)
+	r.c.Enumerate = func() ([]hidraw.Info, error) { return withDevice(realUnit(), "1-1", 0x8009), nil }
+	if _, err := r.c.Devices(); err != nil {
+		t.Fatal(err)
+	}
+}

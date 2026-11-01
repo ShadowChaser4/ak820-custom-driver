@@ -15,18 +15,22 @@ import (
 
 // Info describes one hidraw node (read from sysfs, no device I/O).
 type Info struct {
-	Node  string // /dev/hidrawN
-	Name  string
-	VID   uint16
-	PID   uint16
-	Iface int // USB interface number, -1 if unknown
-	Raw   []byte
-	D     Desc
+	Node   string // /dev/hidrawN (changes on every replug; never store it)
+	Device string // sysfs path of the owning USB device: identical for all interfaces of one keyboard
+	Name   string
+	VID    uint16
+	PID    uint16
+	Iface  int // USB interface number, -1 if unknown
+	Raw    []byte
+	D      Desc
 }
 
 // Enumerate lists hidraw nodes whose vendor id matches vid (0 = all).
-func Enumerate(vid uint16) ([]Info, error) {
-	nodes, err := filepath.Glob("/sys/class/hidraw/hidraw*")
+func Enumerate(vid uint16) ([]Info, error) { return EnumerateAt("/sys", vid) }
+
+// EnumerateAt is Enumerate with an injectable sysfs root (for tests).
+func EnumerateAt(sysRoot string, vid uint16) ([]Info, error) {
+	nodes, err := filepath.Glob(filepath.Join(sysRoot, "class/hidraw/hidraw*"))
 	if err != nil {
 		return nil, err
 	}
@@ -61,6 +65,7 @@ func Enumerate(vid uint16) ([]Info, error) {
 			continue
 		}
 		if real, err := filepath.EvalSymlinks(dev); err == nil {
+			inf.Device = filepath.Dir(filepath.Dir(real)) // hid device -> USB interface -> USB device
 			if b, err := os.ReadFile(filepath.Join(real, "..", "bInterfaceNumber")); err == nil {
 				if v, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
 					inf.Iface = v
@@ -165,4 +170,26 @@ func (d *Dev) SetFeature(payload []byte, n int) error {
 		return errno
 	}
 	return nil
+}
+
+// Groups splits interfaces by physical USB device, ordered by sysfs path so the
+// numbering is stable while the keyboards stay plugged in.
+func Groups(all []Info) [][]Info {
+	idx := map[string]int{}
+	var keys []string
+	for _, i := range all {
+		if _, ok := idx[i.Device]; !ok {
+			idx[i.Device] = -1
+			keys = append(keys, i.Device)
+		}
+	}
+	sort.Strings(keys)
+	for n, k := range keys {
+		idx[k] = n
+	}
+	out := make([][]Info, len(keys))
+	for _, i := range all {
+		out[idx[i.Device]] = append(out[idx[i.Device]], i)
+	}
+	return out
 }

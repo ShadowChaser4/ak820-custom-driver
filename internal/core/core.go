@@ -33,6 +33,7 @@ type Core struct {
 	Enumerate func() ([]hidraw.Info, error)
 	OpenDev   func(hidraw.Info) (DevIO, error)
 	DataDir   string // only the upload history is stored on disk
+	Device    int    // 1-based keyboard to use when several are plugged in (0 = require exactly one)
 
 	// In-memory session. Nothing about device nodes is ever written to disk:
 	// /dev/hidrawN numbers change on every replug and differ between machines.
@@ -69,15 +70,42 @@ var ErrNoDevice = errors.New("no 0c45:* hidraw device found (USB mode, cable plu
 
 // ---- discovery ---------------------------------------------------------------
 
+// SupportedPIDs are the products this tool drives. 0x0c45 is a vendor id shared
+// by many unrelated devices, and the 2.4G dongle (0xfefe) cannot reach the screen.
+var SupportedPIDs = map[uint16]bool{0x800A: true, 0x8009: true}
+
+// ErrMultiple is returned when several keyboards are connected and none was chosen.
+type ErrMultiple struct{ N int }
+
+func (e ErrMultiple) Error() string {
+	return fmt.Sprintf("%d AK820 keyboards are connected. Unplug all but one, or choose one with --device 1 ... --device %d.", e.N, e.N)
+}
+
+// Devices returns the interfaces of the one keyboard to use.
 func (c *Core) Devices() ([]hidraw.Info, error) {
 	all, err := c.Enumerate()
 	if err != nil {
 		return nil, err
 	}
-	if len(all) == 0 {
-		return nil, ErrNoDevice
+	var ours []hidraw.Info
+	for _, i := range all {
+		if SupportedPIDs[i.PID] {
+			ours = append(ours, i)
+		}
 	}
-	return all, nil
+	groups := hidraw.Groups(ours)
+	switch {
+	case len(groups) == 0:
+		return nil, ErrNoDevice
+	case c.Device > 0:
+		if c.Device > len(groups) {
+			return nil, fmt.Errorf("--device %d: only %d keyboard(s) found", c.Device, len(groups))
+		}
+		return groups[c.Device-1], nil
+	case len(groups) > 1:
+		return nil, ErrMultiple{len(groups)}
+	}
+	return groups[0], nil
 }
 
 func Vendor(all []hidraw.Info) []hidraw.Info {
