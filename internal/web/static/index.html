@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keyboard screen picture</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Keyboard screen picture</h1>
+  <p class="lead">Put your own picture or animation on the little screen of your AJAZZ AK820 Pro.</p>
+</header>
+
+<main>
+<!-- STEP 1 -->
+<section class="step" id="step1" aria-labelledby="h1">
+  <h2 id="h1"><span class="num">1</span> Connect your keyboard</h2>
+  <div id="conn" class="status" data-level="warn" role="status" aria-live="polite">
+    <div class="status-title" id="conn-title">Looking for your keyboard...</div>
+    <p id="conn-msg"></p>
+  </div>
+  <div id="checklist" hidden>
+    <p class="strong">Please check these things:</p>
+    <ul>
+      <li>Plug the keyboard into the computer with the USB-C cable.</li>
+      <li>Slide the switch on the back of the keyboard to <b>USB</b>. Bluetooth and the 2.4G dongle can't control the screen.</li>
+      <li id="perm-tip" hidden>Your computer is not letting this program talk to the keyboard yet. This is a permission setting on your computer. Ask whoever set up your computer, or see the help page of this tool.</li>
+    </ul>
+  </div>
+  <div class="actions">
+    <button id="btn-connect" class="big primary">Connect &amp; set the keyboard clock</button>
+    <button id="btn-recheck" class="big">Check again</button>
+  </div>
+  <p class="hint">This also sets the clock shown on the keyboard screen to your computer's time.</p>
+  <p id="connect-msg" class="msg" role="status" aria-live="polite"></p>
+</section>
+
+<!-- STEP 2 -->
+<section class="step" id="step2" aria-labelledby="h2">
+  <h2 id="h2"><span class="num">2</span> Pick a picture</h2>
+
+  <h3>Ready-made animations</h3>
+  <div id="gallery" class="grid" role="group" aria-label="Ready-made animations"></div>
+  <p id="gallery-empty" class="hint" hidden>No ready-made animations are available. You can still use your own picture below.</p>
+
+  <h3>Or use your own picture</h3>
+  <div id="drop" tabindex="0" role="button" aria-label="Choose a picture file">
+    <b>Drop a picture here</b> or click to choose one
+    <span class="hint block">PNG, JPEG or GIF (animated GIFs work too)</span>
+    <input id="file" type="file" accept="image/png,image/jpeg,image/gif" hidden>
+  </div>
+
+  <div class="pick">
+    <div class="pv-wrap">
+      <div class="pv-frame">
+        <img id="pv" width="256" height="256" alt="Preview of what will be on the keyboard screen" hidden>
+        <div id="pv-empty">Your preview will show here</div>
+      </div>
+      <p id="pv-meta" class="hint" aria-live="polite"></p>
+    </div>
+    <div class="opts">
+      <label>How to fit the picture
+        <select id="fit">
+          <option value="cover">Fill the screen (crop the edges)</option>
+          <option value="contain">Show everything (may add borders)</option>
+          <option value="stretch">Stretch to the screen</option>
+        </select>
+      </label>
+      <label>Border colour
+        <input id="bg" type="color" value="#000000">
+      </label>
+      <label>Animation speed
+        <select id="speed">
+          <option value="0">Like the original</option>
+          <option value="200">Slow</option>
+          <option value="100">Normal</option>
+          <option value="50">Fast</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <div id="recent" hidden>
+    <h3>Recent pictures</h3>
+    <div id="hist-list" class="grid recent"></div>
+  </div>
+</section>
+
+<!-- STEP 3 -->
+<section class="step" id="step3" aria-labelledby="h3">
+  <h2 id="h3"><span class="num">3</span> Send it to the keyboard</h2>
+  <button id="btn-send" class="big primary wide" disabled aria-describedby="lock-note">Send to my keyboard</button>
+  <p id="lock-note" class="lock"></p>
+  <div id="prog-box" hidden>
+    <progress id="prog" max="100" value="0" aria-label="Sending progress"></progress>
+    <span id="prog-pct"></span>
+  </div>
+  <p id="send-msg" class="msg" role="status" aria-live="polite"></p>
+</section>
+
+<!-- ADVANCED -->
+<details id="adv">
+  <summary>Advanced / troubleshooting</summary>
+  <div class="adv-body">
+    <p class="hint">Only needed if the steps above don't work, or if you were asked to collect information.</p>
+
+    <h3>Keyboard connections</h3>
+    <div class="scroll"><table id="ifaces"><thead><tr>
+      <th>node</th><th>if</th><th>page</th><th>in</th><th>out</th><th>feat</th><th>rw</th>
+    </tr></thead><tbody></tbody></table></div>
+    <div class="row">
+      <button id="btn-probe-dry">Preview probe</button>
+      <button id="btn-probe">Send probe...</button>
+      <button id="btn-report">Copy report</button>
+    </div>
+    <pre id="probe-out" hidden></pre>
+    <button id="btn-copylog" hidden>Copy probe log for the issue</button>
+
+    <h3>Command interface</h3>
+    <p class="hint">The interface that answers GET_DEVICE_INFO. Uploading is locked until one has answered.</p>
+    <div class="row">
+      <label>node <select id="cmd-node"></select></label>
+      <label>report length <input id="cmd-len" type="number" min="8" step="1"></label>
+      <button id="btn-info-dry">Dry run</button>
+      <button id="btn-info">Get info...</button>
+    </div>
+    <pre id="info-out" hidden></pre>
+
+    <h3>Upload interface</h3>
+    <p class="hint">Leave on "same as command" unless the probe shows the data goes elsewhere.</p>
+    <div class="row">
+      <label>node <select id="data-node"></select></label>
+      <label>report length <input id="data-len" type="number" min="8" step="1" placeholder="auto"></label>
+      <button id="btn-data">Save</button>
+    </div>
+
+    <h3>Picture options</h3>
+    <div class="row">
+      <label>max frames <input id="maxf" type="number" min="1" max="255" value="255"></label>
+    </div>
+
+    <div id="builtin-box" hidden>
+      <h3>Built-in animation</h3>
+      <div class="row">
+        <label>index <input id="bi" type="number" min="0" max="255" value="0"></label>
+        <button id="btn-bi-dry">Dry run</button>
+        <button id="btn-bi">Select...</button>
+      </div>
+      <pre id="extras-out" hidden></pre>
+    </div>
+
+    <h3>History</h3>
+    <div id="hist-adv" class="row"></div>
+  </div>
+</details>
+</main>
+
+<dialog id="dlg" aria-labelledby="dlg-title">
+  <form method="dialog">
+    <h3 id="dlg-title"></h3>
+    <p id="dlg-text"></p>
+    <details id="dlg-det"><summary>Technical details</summary><pre id="dlg-body"></pre></details>
+    <div class="actions">
+      <button value="no" class="big">Cancel</button>
+      <button value="yes" id="dlg-ok" class="big primary">Yes, continue</button>
+    </div>
+  </form>
+</dialog>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
