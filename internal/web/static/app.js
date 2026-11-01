@@ -200,7 +200,7 @@ async function sse(path, body) {
       const ev = JSON.parse(line);
       if (ev.total) { p.value = (100 * ev.done) / ev.total; $("prog-pct").textContent = Math.round(p.value) + "%"; }
       if (ev.event === "error") throw new Error(ev.error);
-      if (ev.event === "done") { finished = true; p.value = 100; $("prog-pct").textContent = "100%"; }
+      if (ev.event === "done") { finished = true; p.value = 100; $("prog-pct").textContent = "100%"; if (ev.warning) toast(ev.warning); }
     }
   }
   if (!finished) throw new Error("no reply: the connection ended early");

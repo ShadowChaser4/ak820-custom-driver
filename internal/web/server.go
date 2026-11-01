@@ -19,6 +19,7 @@ import (
 	"image/png"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"strconv"
 	"sync"
@@ -166,8 +167,8 @@ type ifaceDTO struct {
 
 func dto(i hidraw.Info) ifaceDTO {
 	return ifaceDTO{i.Node, i.Iface, fmt.Sprintf("%04x", i.VID), fmt.Sprintf("%04x", i.PID), i.Name,
-		fmt.Sprintf("0x%04X", i.D.Page), i.D.InBytes(), i.D.OutBytes(), i.D.FeatBytes(), i.D.ReportIDs,
-		i.Accessible(), i.D.Vendor(), fmt.Sprintf("% x", i.Raw)}
+		fmt.Sprintf("0x%04X", i.Descriptor.Page), i.Descriptor.InBytes(), i.Descriptor.OutBytes(), i.Descriptor.FeatBytes(), i.Descriptor.ReportIDs,
+		i.Accessible(), i.Descriptor.Vendor(), fmt.Sprintf("% x", i.Raw)}
 }
 
 func (s *Server) devices(w http.ResponseWriter, r *http.Request) {
@@ -412,10 +413,14 @@ func (s *Server) send(w http.ResponseWriter, payload []byte, name string, dry bo
 		ev(map[string]any{"event": "error", "error": err.Error()})
 		return
 	}
+	done := map[string]any{"event": "done"}
 	if save {
-		_ = history.Save(s.Core.HistoryDir(), payload, name)
+		if err := history.Save(s.Core.HistoryDir(), payload, name); err != nil {
+			log.Printf("saving history: %v", err)
+			done["warning"] = "The picture was sent, but could not be added to your recent pictures."
+		}
 	}
-	ev(map[string]any{"event": "done"})
+	ev(done)
 }
 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {

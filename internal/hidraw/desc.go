@@ -1,8 +1,7 @@
-// Package hidraw enumerates Linux hidraw nodes and parses their report descriptors.
 package hidraw
 
-// Desc is the part of a HID report descriptor this tool cares about.
-type Desc struct {
+// Descriptor is the part of a HID report descriptor this tool cares about.
+type Descriptor struct {
 	Page      uint32 // first Usage Page
 	InBits    int
 	OutBits   int
@@ -10,12 +9,17 @@ type Desc struct {
 	ReportIDs bool
 }
 
-func (d Desc) InBytes() int   { return d.InBits / 8 }
-func (d Desc) OutBytes() int  { return d.OutBits / 8 }
-func (d Desc) FeatBytes() int { return d.FeatBits / 8 }
+// InBytes is the total size of the input fields.
+func (d Descriptor) InBytes() int { return d.InBits / 8 }
+
+// OutBytes is the total size of the output fields.
+func (d Descriptor) OutBytes() int { return d.OutBits / 8 }
+
+// FeatBytes is the total size of the feature fields.
+func (d Descriptor) FeatBytes() int { return d.FeatBits / 8 }
 
 // Vendor reports whether the first usage page is vendor-defined (0xFF00-0xFFFF).
-func (d Desc) Vendor() bool { return d.Page >= 0xFF00 }
+func (d Descriptor) Vendor() bool { return d.Page >= 0xFF00 }
 
 const (
 	maxField = 1 << 16 // largest report size / count we believe (real ones are tiny)
@@ -33,8 +37,8 @@ func addBits(total, size, count int) int {
 // ParseDescriptor walks the short items of a report descriptor and sums the
 // Input / Output / Feature field sizes. Push/Pop are not handled (vendor
 // descriptors on this keyboard don't use them).
-func ParseDescriptor(b []byte) Desc {
-	var d Desc
+func ParseDescriptor(b []byte) Descriptor {
+	var d Descriptor
 	var size, count int
 	havePage := false
 	for i := 0; i < len(b); {

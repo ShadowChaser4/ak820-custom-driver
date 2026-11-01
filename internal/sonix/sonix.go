@@ -137,12 +137,19 @@ func BuildPayload(frames []img.Frame) ([]byte, int, error) {
 
 // ---- upload -----------------------------------------------------------------
 
-func (p *Port) drain() {
+// drain discards stale acknowledgements, stopping early when the pipe is quiet.
+// The number of reads is bounded in case a faulty pipe never goes quiet.
+func (p *Port) drain() error {
 	for i := 0; i < 64; i++ {
-		if r, _ := p.D.ReadAck(10 * time.Millisecond); r == nil {
-			return
+		r, err := p.D.ReadAck(10 * time.Millisecond)
+		if err != nil {
+			return err
+		}
+		if r == nil {
+			return nil
 		}
 	}
+	return nil
 }
 
 func (p *Port) sendChunk(chunk []byte) ([]byte, error) {
@@ -168,7 +175,9 @@ func imageCfg(chunks int) []byte {
 // Align locks the firmware's 64-packet ring counter to 0 (see FINDINGS.md §2).
 // It writes dummy zero data and a SAVE, so it overwrites the current animation.
 func (p *Port) Align() (bool, error) {
-	p.drain()
+	if err := p.drain(); err != nil {
+		return false, err
+	}
 	if err := p.C.SetFeature(Cmd(0x18, 0, false)); err != nil {
 		return false, err
 	}
@@ -181,7 +190,9 @@ func (p *Port) Align() (bool, error) {
 	if err := p.handshake(cfgDelay); err != nil {
 		return false, err
 	}
-	p.drain()
+	if err := p.drain(); err != nil {
+		return false, err
+	}
 	pkt := make([]byte, 64)
 	burst := 0
 	for b := 1; b <= 8 && burst == 0; b++ {
@@ -190,7 +201,11 @@ func (p *Port) Align() (bool, error) {
 				return false, err
 			}
 		}
-		if r, _ := p.D.ReadAck(220 * time.Millisecond); r != nil {
+		r, err := p.D.ReadAck(220 * time.Millisecond)
+		if err != nil {
+			return false, err
+		}
+		if r != nil {
 			burst = b
 		}
 	}
@@ -204,7 +219,11 @@ func (p *Port) Align() (bool, error) {
 		if err := p.D.WriteData(pkt); err != nil {
 			return false, err
 		}
-		if r, _ := p.D.ReadAck(220 * time.Millisecond); r != nil {
+		r, err := p.D.ReadAck(220 * time.Millisecond)
+		if err != nil {
+			return false, err
+		}
+		if r != nil {
 			fine = q
 		}
 	}
@@ -219,7 +238,9 @@ func (p *Port) Align() (bool, error) {
 	if err := p.handshake(100 * time.Millisecond); err != nil {
 		return false, err
 	}
-	p.drain()
+	if err := p.drain(); err != nil {
+		return false, err
+	}
 	return burst > 0 && fine > 0 && ack3 != nil, nil
 }
 
@@ -253,7 +274,9 @@ func (p *Port) Upload(payload []byte, chunks int, progress func(done, total int)
 	if err := p.handshake(cfgDelay); err != nil {
 		return err
 	}
-	p.drain()
+	if err := p.drain(); err != nil {
+		return err
+	}
 	deadline := time.Now().Add(30*time.Second + time.Duration(chunks)*2*ackTimeout)
 	acks := 0
 	for i := 0; i < chunks; i++ {
@@ -281,6 +304,6 @@ func (p *Port) Upload(payload []byte, chunks int, progress func(done, total int)
 	if err := p.handshake(100 * time.Millisecond); err != nil {
 		return err
 	}
-	p.drain()
+	_ = p.drain() // the picture is saved; a failure here changes nothing for the caller
 	return nil
 }

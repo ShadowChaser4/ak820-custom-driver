@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -50,20 +51,37 @@ func sonixUnit(t *testing.T, usb string, pid uint16) []hidraw.Info {
 		if err := os.WriteFile(p, nil, 0o666); err != nil {
 			t.Fatal(err)
 		}
-		return hidraw.Info{Node: p, Device: usb, VID: 0x0c45, PID: pid, Iface: iface, Name: "SONiX AK820", Raw: raw, D: hidraw.ParseDescriptor(raw)}
+		return hidraw.Info{Node: p, USBPath: usb, VID: 0x0c45, PID: pid, Iface: iface, Name: "SONiX AK820", Raw: raw, Descriptor: hidraw.ParseDescriptor(raw)}
 	}
 	return []hidraw.Info{mk("hidraw5", 2, vdesc(0xFF68, 64, 4096, 0)), mk("hidraw6", 3, vdesc(0xFF13, 64, 64, 64))}
 }
 
 type fakeDev struct{ w *counters }
+
+// ack stands in for the firmware: one 01 5A 02 reply per 4096 bytes written.
+func (c *counters) add(n int) {
+	c.bytes += n
+	for c.bytes >= 4096 {
+		c.bytes -= 4096
+		c.acks++
+	}
+}
+
 type counters struct {
 	opens, writes, feats int
 	firstFeat            []byte
+	bytes, acks          int
 }
 
-func (f fakeDev) Write([]byte) error                        { f.w.writes++; return nil }
-func (f fakeDev) ReadTimeout(time.Duration) ([]byte, error) { return nil, nil }
-func (f fakeDev) GetFeature(byte, int) ([]byte, error)      { return make([]byte, 65), nil }
+func (f fakeDev) Write(p []byte) error { f.w.writes++; f.w.add(len(p)); return nil }
+func (f fakeDev) ReadTimeout(time.Duration) ([]byte, error) {
+	if f.w.acks > 0 {
+		f.w.acks--
+		return []byte{0x01, 0x5A, 0x02}, nil
+	}
+	return nil, nil
+}
+func (f fakeDev) GetFeature(byte, int) ([]byte, error) { return make([]byte, 65), nil }
 func (f fakeDev) SetFeature(p []byte, n int) error {
 	if f.w.feats == 0 {
 		f.w.firstFeat = append([]byte(nil), p...)
@@ -188,7 +206,7 @@ func TestFriendlyErrorsSayWhatToDoNext(t *testing.T) {
 		}
 	})
 	t.Run("unknown layout", func(t *testing.T) {
-		unknown := []hidraw.Info{{Node: "/dev/x", VID: 0x0c45, PID: 0x800a, Raw: vdesc(0xFF00, 8, 8, 0), D: hidraw.ParseDescriptor(vdesc(0xFF00, 8, 8, 0))}}
+		unknown := []hidraw.Info{{Node: "/dev/x", VID: 0x0c45, PID: 0x800a, Raw: vdesc(0xFF00, 8, 8, 0), Descriptor: hidraw.ParseDescriptor(vdesc(0xFF00, 8, 8, 0))}}
 		r := newRig(t, unknown)
 		if r.a.run([]string{"time", "--yes"}) != 1 || !strings.Contains(r.err.String(), "ak820 report --issue") || r.n.opens != 0 {
 			t.Errorf("%q opens %d", r.err, r.n.opens)
@@ -331,5 +349,40 @@ func TestHintsNameTheProgramTheUserActuallyRan(t *testing.T) {
 	r.a.run([]string{"setup"})
 	if !strings.Contains(r.out.String(), "./ak820 setup --print-rule") {
 		t.Errorf("%s", r.out)
+	}
+}
+
+func TestHelpFlagOnEveryCommandIsNotAnError(t *testing.T) {
+	for _, cmd := range []string{"setup", "report", "probe", "info", "upload", "builtin", "time", "ui"} {
+		r := newRig(t, sonixUnit(t, "1-1", 0x800A))
+		code := r.a.run([]string{cmd, "-h"})
+		if code != 0 || strings.Contains(r.err.String(), "error") || r.uiCalled {
+			t.Errorf("%s -h: exit %d, stderr %q, ui started %v", cmd, code, r.err, r.uiCalled)
+		}
+		if r.n.opens != 0 {
+			t.Errorf("%s -h opened the keyboard", cmd)
+		}
+	}
+}
+
+// A picture that reached the keyboard is a success even if saving history fails,
+// but the failure must not be silent.
+func TestUploadWarnsWhenHistoryCannotBeSaved(t *testing.T) {
+	r := newRig(t, sonixUnit(t, "1-1", 0x800A))
+	blocker := filepath.Join(t.TempDir(), "a-file")
+	os.WriteFile(blocker, nil, 0o644)
+	r.a.c.DataDir = blocker // history dir cannot be created under a regular file
+	if code := r.a.run([]string{"upload", "--yes", testPNG(t)}); code != 0 {
+		t.Fatalf("exit %d: %s", code, r.err)
+	}
+	if !strings.Contains(r.out.String(), "done") || !strings.Contains(r.err.String(), "warning") {
+		t.Errorf("out %q err %q", r.out, r.err)
+	}
+}
+
+func TestUnpluggedKeyboardGetsAPlainMessage(t *testing.T) {
+	err := fmt.Errorf("read: %w", syscall.ENODEV)
+	if m := friendlyErr(err); !strings.Contains(m, "disappeared") {
+		t.Errorf("%q", m)
 	}
 }

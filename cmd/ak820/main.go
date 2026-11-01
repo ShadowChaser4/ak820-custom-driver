@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/ShadowChaser4/ak820-custom-driver/internal/core"
@@ -100,13 +101,7 @@ func (a *app) run(args []string) int {
 	case "list":
 		err = a.cmdList(false, false)
 	case "report":
-		fs := flag.NewFlagSet("report", flag.ContinueOnError)
-		fs.SetOutput(a.errw)
-		issue := fs.Bool("issue", false, "paste-ready bug report")
-		if fs.Parse(rest) != nil {
-			return 2
-		}
-		err = a.cmdList(true, *issue)
+		err = a.cmdReport(rest)
 	case "probe":
 		err = a.cmdProbe(rest)
 	case "info":
@@ -125,6 +120,9 @@ func (a *app) run(args []string) int {
 		fmt.Fprintf(a.errw, "unknown command %q\n\n%s", cmd, usageText)
 		return 2
 	}
+	if errors.Is(err, flag.ErrHelp) {
+		return 0 // the flag package already printed the usage
+	}
 	if err != nil {
 		if err != errExit {
 			fmt.Fprintln(a.errw, strings.ReplaceAll(friendlyErr(err), "`ak820 ", "`"+a.name()+" "))
@@ -140,6 +138,8 @@ func friendlyErr(err error) string {
 	switch {
 	case errors.Is(err, core.ErrNoDevice):
 		return "No AK820 keyboard found.\n  Plug it in with the USB-C cable and slide the switch on the back to USB.\n  (Bluetooth and the 2.4G dongle cannot control the screen.)\n  Run `ak820 setup` to check this computer."
+	case errors.Is(err, syscall.ENODEV):
+		return "The keyboard disappeared while talking to it.\n  Check the cable and that the switch on the back is on USB, then try again."
 	case errors.Is(err, hidraw.ErrPermission):
 		return "This computer is not letting ak820 use the keyboard yet.\n  Run `ak820 setup` and follow the steps, then unplug and replug the keyboard."
 	case errors.Is(err, core.ErrUnknownLayout):
@@ -166,12 +166,22 @@ func (a *app) cmdList(md, issue bool) error {
 		fmt.Fprint(a.out, core.Report(all))
 	default:
 		for _, i := range all {
-			d := i.D
+			d := i.Descriptor
 			fmt.Fprintf(a.out, "%s  if%d  %04x:%04x  page 0x%04X  in %4d  out %4d  feat %3d  rw=%v  %s\n",
 				i.Node, i.Iface, i.VID, i.PID, d.Page, d.InBytes(), d.OutBytes(), d.FeatBytes(), i.Accessible(), i.Name)
 		}
 	}
 	return nil
+}
+
+func (a *app) cmdReport(args []string) error {
+	fs := flag.NewFlagSet("report", flag.ContinueOnError)
+	fs.SetOutput(a.errw)
+	issue := fs.Bool("issue", false, "paste-ready bug report")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	return a.cmdList(true, *issue)
 }
 
 func kernel() string {
@@ -320,7 +330,9 @@ func (a *app) cmdUpload(args []string) error {
 		return nil
 	}
 	fmt.Fprintln(a.errw)
-	_ = history.Save(a.c.HistoryDir(), payload, fs.Arg(0))
+	if err := history.Save(a.c.HistoryDir(), payload, fs.Arg(0)); err != nil {
+		fmt.Fprintf(a.errw, "warning: the picture was sent, but could not be added to your history: %v\n", err)
+	}
 	fmt.Fprintln(a.out, "done")
 	return nil
 }

@@ -35,7 +35,7 @@ func TestReadOnlyInterfacesAreRecognised(t *testing.T) {
 	_, all := keyboard(t)
 	t.Logf("layout: %s", core.Layout(all))
 	for _, i := range all {
-		t.Logf("%s if%d page %#04x in %d out %d feat %d rw=%v", i.Node, i.Iface, i.D.Page, i.D.InBytes(), i.D.OutBytes(), i.D.FeatBytes(), i.Accessible())
+		t.Logf("%s if%d page %#04x in %d out %d feat %d rw=%v", i.Node, i.Iface, i.Descriptor.Page, i.Descriptor.InBytes(), i.Descriptor.OutBytes(), i.Descriptor.FeatBytes(), i.Accessible())
 		if !i.Accessible() {
 			t.Errorf("%s: no read/write permission (run `ak820 setup`)", i.Node)
 		}

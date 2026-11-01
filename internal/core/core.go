@@ -111,7 +111,7 @@ func (c *Core) Devices() ([]hidraw.Info, error) {
 func Vendor(all []hidraw.Info) []hidraw.Info {
 	var v []hidraw.Info
 	for _, i := range all {
-		if i.D.Vendor() {
+		if i.Descriptor.Vendor() {
 			v = append(v, i)
 		}
 	}
@@ -133,9 +133,9 @@ func LegacyLayout(all []hidraw.Info) (cfg, bulk *hidraw.Info) {
 	pages := map[uint32]bool{0xFF68: true, 0xFF80: true, 0xFF60: true, 0xFF00: true, 0xFF01: true, 0xFF1B: true}
 	for k := range all {
 		i := &all[k]
-		if i.D.Page == 0xFF67 {
+		if i.Descriptor.Page == 0xFF67 {
 			bulk = i
-		} else if pages[i.D.Page] && cfg == nil {
+		} else if pages[i.Descriptor.Page] && cfg == nil {
 			cfg = i
 		}
 	}
@@ -152,9 +152,9 @@ func SonixLayout(all []hidraw.Info) (ctrl, data *hidraw.Info) {
 	for k := range all {
 		i := &all[k]
 		switch {
-		case i.D.Page == 0xFF13 && i.D.FeatBytes() == 64 && ctrl == nil:
+		case i.Descriptor.Page == 0xFF13 && i.Descriptor.FeatBytes() == 64 && ctrl == nil:
 			ctrl = i
-		case i.D.Page == 0xFF68 && i.D.OutBytes() == sonix.ChunkSize && data == nil:
+		case i.Descriptor.Page == 0xFF68 && i.Descriptor.OutBytes() == sonix.ChunkSize && data == nil:
 			data = i
 		}
 	}
@@ -276,15 +276,15 @@ func (c *Core) Resolve(all []hidraw.Info, role string, t Target) (hidraw.Info, i
 			return i, 0, err
 		}
 		if t.Len == 0 {
-			t.Len = i.D.OutBytes()
+			t.Len = i.Descriptor.OutBytes()
 		}
 		return i, t.Len, nil
 	}
 	if ctl, dat := SonixLayout(all); ctl != nil && dat != nil {
 		if role == "data" {
-			return *dat, dat.D.OutBytes(), nil
+			return *dat, dat.Descriptor.OutBytes(), nil
 		}
-		return *ctl, ctl.D.FeatBytes(), nil
+		return *ctl, ctl.Descriptor.FeatBytes(), nil
 	}
 	cfg, bulk := LegacyLayout(all)
 	if cfg == nil || bulk == nil {
@@ -294,7 +294,7 @@ func (c *Core) Resolve(all []hidraw.Info, role string, t Target) (hidraw.Info, i
 	if role == "data" {
 		i = bulk
 	}
-	return *i, i.D.OutBytes(), nil
+	return *i, i.Descriptor.OutBytes(), nil
 }
 
 // ---- probe -------------------------------------------------------------------
@@ -344,11 +344,11 @@ func (c *Core) Probe(dry, feature bool) (*ProbeResult, error) {
 	vend := Vendor(all)
 	var cands []hidraw.Info
 	for _, i := range vend {
-		if i.D.OutBytes() >= 16 {
+		if i.Descriptor.OutBytes() >= 16 {
 			cands = append(cands, i)
 		}
 	}
-	sort.SliceStable(cands, func(a, b int) bool { return cands[a].D.OutBytes() < cands[b].D.OutBytes() })
+	sort.SliceStable(cands, func(a, b int) bool { return cands[a].Descriptor.OutBytes() < cands[b].Descriptor.OutBytes() })
 	if len(cands) == 0 {
 		return nil, errors.New("no vendor-page interface with an output report")
 	}
@@ -360,13 +360,13 @@ func (c *Core) Probe(dry, feature bool) (*ProbeResult, error) {
 		say("dry run: would send, listening on all vendor inputs for 500 ms each:\n")
 	}
 	for _, i := range cands {
-		pkt := proto.Chunks(i.D.OutBytes(), proto.CmdInfo, nil, 48)[0]
-		res.Steps = append(res.Steps, ProbeStep{Node: i.Node, Len: i.D.OutBytes(), Sent: Hex(pkt)})
+		pkt := proto.Chunks(i.Descriptor.OutBytes(), proto.CmdInfo, nil, 48)[0]
+		res.Steps = append(res.Steps, ProbeStep{Node: i.Node, Len: i.Descriptor.OutBytes(), Sent: Hex(pkt)})
 	}
 	if feature {
 		for _, i := range vend {
-			if i.D.FeatBytes() > 0 {
-				res.Features = append(res.Features, FeatureRead{Node: i.Node, Len: i.D.FeatBytes()})
+			if i.Descriptor.FeatBytes() > 0 {
+				res.Features = append(res.Features, FeatureRead{Node: i.Node, Len: i.Descriptor.FeatBytes()})
 			}
 		}
 	}
@@ -394,13 +394,17 @@ func (c *Core) Probe(dry, feature bool) (*ProbeResult, error) {
 	}
 	for k, i := range cands {
 		for _, v := range vend {
-			for v.D.InBytes() > 0 { // drain stale input
-				if r, _ := devs[v.Node].ReadTimeout(time.Millisecond); r == nil {
+			for v.Descriptor.InBytes() > 0 { // drain stale input
+				r, err := devs[v.Node].ReadTimeout(time.Millisecond)
+				if err != nil {
+					return res, fmt.Errorf("reading %s: %w", v.Node, err)
+				}
+				if r == nil {
 					break
 				}
 			}
 		}
-		pkt := proto.Chunks(i.D.OutBytes(), proto.CmdInfo, nil, 48)[0]
+		pkt := proto.Chunks(i.Descriptor.OutBytes(), proto.CmdInfo, nil, 48)[0]
 		st := &res.Steps[k]
 		say("- write %s (%d B): `%s`\n", i.Node, st.Len, Hex(pkt))
 		if err := devs[i.Node].Write(pkt); err != nil {
@@ -411,10 +415,14 @@ func (c *Core) Probe(dry, feature bool) (*ProbeResult, error) {
 		end := time.Now().Add(500 * time.Millisecond)
 		for time.Now().Before(end) {
 			for _, v := range vend {
-				if v.D.InBytes() == 0 {
+				if v.Descriptor.InBytes() == 0 {
 					continue
 				}
-				if r, _ := devs[v.Node].ReadTimeout(20 * time.Millisecond); r != nil {
+				r, err := devs[v.Node].ReadTimeout(20 * time.Millisecond)
+				if err != nil {
+					return res, fmt.Errorf("reading %s: %w", v.Node, err)
+				}
+				if r != nil {
 					st.Replies = append(st.Replies, Reply{v.Node, Hex(r)})
 					say("  <- %s: `%s`\n", v.Node, Hex(r))
 				}
@@ -604,7 +612,7 @@ func Report(all []hidraw.Info) string {
 	b.WriteString("| node | iface | VID:PID | name | usage page | in B | out B | feature B | report IDs | rw |\n")
 	b.WriteString("|---|---|---|---|---|---|---|---|---|---|\n")
 	for _, i := range all {
-		d := i.D
+		d := i.Descriptor
 		fmt.Fprintf(&b, "| %s | %d | %04x:%04x | %s | 0x%04X | %d | %d | %d | %v | %v |\n",
 			i.Node, i.Iface, i.VID, i.PID, i.Name, d.Page, d.InBytes(), d.OutBytes(), d.FeatBytes(), d.ReportIDs, i.Accessible())
 	}

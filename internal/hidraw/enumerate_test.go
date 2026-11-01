@@ -62,14 +62,14 @@ func TestEnumerateRealUnit(t *testing.T) {
 		out, feature int
 	}{{"/dev/hidraw5", 0x01, 1, 0}, {"/dev/hidraw6", 0x0C, 0, 0}, {"/dev/hidraw7", 0xFF68, 4096, 0}, {"/dev/hidraw8", 0xFF13, 64, 64}} {
 		g := got[k]
-		if g.Node != want.node || g.D.Page != want.page || g.D.OutBytes() != want.out || g.D.FeatBytes() != want.feature {
-			t.Errorf("#%d: %s page %#x out %d feat %d", k, g.Node, g.D.Page, g.D.OutBytes(), g.D.FeatBytes())
+		if g.Node != want.node || g.Descriptor.Page != want.page || g.Descriptor.OutBytes() != want.out || g.Descriptor.FeatBytes() != want.feature {
+			t.Errorf("#%d: %s page %#x out %d feat %d", k, g.Node, g.Descriptor.Page, g.Descriptor.OutBytes(), g.Descriptor.FeatBytes())
 		}
 		if g.Iface != k || g.VID != 0x0C45 || g.PID != 0x800A || g.Name != "SONiX AK820" {
 			t.Errorf("#%d identity: iface %d %04x:%04x %q", k, g.Iface, g.VID, g.PID, g.Name)
 		}
-		if g.Device == "" || g.Device != got[0].Device {
-			t.Errorf("#%d: all interfaces of one keyboard must share a Device, got %q vs %q", k, g.Device, got[0].Device)
+		if g.USBPath == "" || g.USBPath != got[0].USBPath {
+			t.Errorf("#%d: all interfaces of one keyboard must share a Device, got %q vs %q", k, g.USBPath, got[0].USBPath)
 		}
 	}
 }
@@ -88,7 +88,7 @@ func TestEnumerateAfterRenumberingFindsTheSameInterfaces(t *testing.T) {
 		t.Errorf("nodes %s .. %s", gb[0].Node, gb[3].Node)
 	}
 	for k := range ga {
-		if ga[k].D != gb[k].D || ga[k].Iface != gb[k].Iface {
+		if ga[k].Descriptor != gb[k].Descriptor || ga[k].Iface != gb[k].Iface {
 			t.Errorf("#%d differs after renumbering", k)
 		}
 	}
@@ -103,12 +103,12 @@ func TestEnumerateTwoKeyboardsAreGroupedSeparately(t *testing.T) {
 	if len(all) != 8 || len(groups) != 2 || len(groups[0]) != 4 || len(groups[1]) != 4 {
 		t.Fatalf("%d interfaces, %d groups", len(all), len(groups))
 	}
-	if groups[0][0].Device == groups[1][0].Device {
+	if groups[0][0].USBPath == groups[1][0].USBPath {
 		t.Error("two physical keyboards must have different Device keys")
 	}
 	for _, g := range groups {
 		for _, i := range g {
-			if i.Device != g[0].Device {
+			if i.USBPath != g[0].USBPath {
 				t.Error("a group mixes interfaces of different keyboards")
 			}
 		}

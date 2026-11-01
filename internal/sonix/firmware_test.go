@@ -336,3 +336,51 @@ func TestProgressIsReportedPerChunk(t *testing.T) {
 		t.Errorf("progress %v", seen)
 	}
 }
+
+// unplugged starts failing every read after the given number of reads, as a real
+// device does when the cable is pulled.
+type unplugged struct {
+	*fw
+	after, reads int
+	gone         bool
+	lateWrites   int
+}
+
+func (u *unplugged) WriteData(p []byte) error {
+	if u.gone {
+		u.lateWrites++
+		return nil
+	}
+	return u.fw.WriteData(p)
+}
+
+var errGone = errors.New("no such device")
+
+func (u *unplugged) ReadAck(t time.Duration) ([]byte, error) {
+	if u.reads++; u.reads > u.after {
+		u.gone = true
+		return nil, errGone
+	}
+	return u.fw.ReadAck(t)
+}
+
+// Regression: read errors were dropped while draining and aligning, so the code
+// kept writing to a keyboard that was already gone.
+func TestUnplugDuringUploadReportsTheRealError(t *testing.T) {
+	pl, n := onePic()
+	for after := 0; after < 12; after++ {
+		f := newFW(5)
+		f.install(t)
+		u := &unplugged{fw: f, after: after}
+		err := (&Port{C: f, D: u}).Upload(pl, n, nil)
+		if !errors.Is(err, errGone) {
+			t.Errorf("unplug after %d reads: got %v", after, err)
+		}
+		if savesAfterRealTransfer(f, n) {
+			t.Errorf("unplug after %d reads: SAVE sent", after)
+		}
+		if u.lateWrites != 0 {
+			t.Errorf("unplug after %d reads: %d writes after the device failed", after, u.lateWrites)
+		}
+	}
+}

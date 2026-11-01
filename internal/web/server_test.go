@@ -37,7 +37,7 @@ func rig(t *testing.T, confirmed bool) (*httptest.Server, *Server, *int, *int) {
 			ff13 := []byte{0x06, 0x13, 0xff, 0x09, 0x01, 0xa1, 0x01, 0x15, 0x00, 0x26, 0xff, 0x00, 0x75, 0x08, 0x95, 0x40,
 				0x09, 0x02, 0x81, 0x02, 0x09, 0x03, 0x91, 0x02, 0x0a, 0x00, 0xff, 0xb1, 0x02, 0xc0}
 			mk := func(node string, iface int, raw []byte) hidraw.Info {
-				return hidraw.Info{Node: node, VID: 0x0c45, PID: 0x800a, Iface: iface, Raw: raw, D: hidraw.ParseDescriptor(raw)}
+				return hidraw.Info{Node: node, VID: 0x0c45, PID: 0x800a, Iface: iface, Raw: raw, Descriptor: hidraw.ParseDescriptor(raw)}
 			}
 			return []hidraw.Info{mk("/dev/hidraw7", 2, ff68), mk("/dev/hidraw8", 3, ff13)}, nil
 		},

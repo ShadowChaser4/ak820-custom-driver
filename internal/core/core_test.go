@@ -24,7 +24,7 @@ func desc(s string) []byte {
 // The four interfaces of a real 0c45:800a unit (descriptors captured from hidraw5-8).
 func realUnit() []hidraw.Info {
 	mk := func(node string, iface int, raw []byte) hidraw.Info {
-		return hidraw.Info{Node: node, VID: 0x0C45, PID: 0x800A, Iface: iface, Raw: raw, D: hidraw.ParseDescriptor(raw)}
+		return hidraw.Info{Node: node, VID: 0x0C45, PID: 0x800A, Iface: iface, Raw: raw, Descriptor: hidraw.ParseDescriptor(raw)}
 	}
 	return []hidraw.Info{
 		mk("/dev/hidraw5", 0, desc("0501 0906 a101 0507 19e0 29e7 1500 2501 7501 9508 8102 9501 7508 8101 9505 7501 0508 1901 2905 9102 9501 7503 9101 9506 7508 1500 26ff00 0507 1900 2a6500 8100 c0")),
@@ -341,7 +341,7 @@ func TestInfoOnSonixExplainsWhatToRunInstead(t *testing.T) {
 func withDevice(all []hidraw.Info, key string, pid uint16) []hidraw.Info {
 	out := append([]hidraw.Info(nil), all...)
 	for i := range out {
-		out[i].Device, out[i].PID = key, pid
+		out[i].USBPath, out[i].PID = key, pid
 		out[i].Node += "-" + key
 	}
 	return out
@@ -358,8 +358,8 @@ func TestTwoKeyboardsRequireAChoice(t *testing.T) {
 	}
 	r.c.Device = 2
 	all, err := r.c.Devices()
-	if err != nil || len(all) != 3 || all[0].Device != "1-2" {
-		t.Fatalf("--device 2: %v %d %q", err, len(all), all[0].Device)
+	if err != nil || len(all) != 3 || all[0].USBPath != "1-2" {
+		t.Fatalf("--device 2: %v %d %q", err, len(all), all[0].USBPath)
 	}
 	r.c.Device = 3
 	if _, err := r.c.Devices(); err == nil {
@@ -373,7 +373,7 @@ func TestOtherProductsAndTheDongleAreIgnored(t *testing.T) {
 	mixed = append(mixed, withDevice(realUnit(), "1-5", 0x1234)...)                                  // unrelated 0c45 device
 	r.c.Enumerate = func() ([]hidraw.Info, error) { return mixed, nil }
 	all, err := r.c.Devices()
-	if err != nil || len(all) != 3 || all[0].Device != "1-1" {
+	if err != nil || len(all) != 3 || all[0].USBPath != "1-1" {
 		t.Fatalf("%v %d", err, len(all))
 	}
 	r.c.Enumerate = func() ([]hidraw.Info, error) { return withDevice(realUnit(), "1-4", 0xFEFE), nil }
